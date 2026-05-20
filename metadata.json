@@ -1,0 +1,6 @@
+{
+  "name": "JPF-HR",
+  "description": "HR Management System for JPF, featuring user management, authentication, and core HR functions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

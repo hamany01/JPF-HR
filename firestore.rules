@@ -1,0 +1,124 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Auth helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(userPath) ? get(userPath).data : null;
+    }
+
+    function hasRole(roles) {
+      let data = getUserData();
+      return isSignedIn() && data != null && data.role in roles;
+    }
+
+    function isAdmin() {
+      return hasRole(['admin']);
+    }
+
+    function isCompanyRole() {
+      return hasRole(['admin', 'company_manager', 'company_assistant']);
+    }
+    
+    function isAnyStaff() {
+      return hasRole(['admin', 'company_manager', 'company_assistant', 'law_manager', 'law_assistant', 'employee']);
+    }
+
+    // --- Users Collection ---
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); 
+      
+      allow create: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    // --- Cases Collection ---
+    match /cases/{caseId} {
+      allow read: if isSignedIn();
+      allow create: if isCompanyRole() || hasRole(['law_manager']);
+      allow update: if isAnyStaff();
+      allow delete: if isAdmin();
+
+      // Subcollections: activities, documents
+      match /activities/{docId} {
+        allow read: if isSignedIn();
+        allow create: if isAnyStaff();
+        allow update: if isAnyStaff();
+        allow delete: if isCompanyRole();
+      }
+      
+      match /documents/{docId} {
+        allow read: if isSignedIn();
+        allow create: if isAnyStaff();
+        allow update: if isAnyStaff();
+        allow delete: if isCompanyRole();
+      }
+
+      // New Payments subcollection
+      match /payments/{docId} {
+        allow read: if isSignedIn();
+        allow create: if hasRole(['admin', 'company_manager', 'law_manager']);
+        allow update: if hasRole(['admin', 'company_manager', 'law_manager']);
+        allow delete: if hasRole(['admin', 'company_manager', 'law_manager']);
+      }
+
+      // Legacy finance subcollection
+      match /finance/{docId} {
+        allow read: if isSignedIn();
+        allow create: if isAnyStaff();
+        allow update: if isAnyStaff();
+        allow delete: if isCompanyRole();
+      }
+    }
+
+    // --- Settings Collection ---
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // --- Requests Collection ---
+    match /requests/{requestId} {
+      allow read: if isSignedIn();
+      allow create: if isCompanyRole();
+      allow update: if hasRole(['admin', 'law_manager']) || (isCompanyRole() && resource.data.status == 'pending');
+      allow delete: if isAdmin();
+    }
+
+    // --- Unified App Events Collection ---
+    match /appEvents/{eventId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+    }
+
+    // --- Notification System ---
+    match /notificationSettings/{document=**} {
+      allow read: if isSignedIn() && isAdmin();
+      allow write: if isSignedIn() && isAdmin();
+    }
+
+    match /notificationRules/{ruleId} {
+      allow read: if isSignedIn() && isAdmin();
+      allow write: if isSignedIn() && isAdmin();
+    }
+
+    match /notificationLogs/{logId} {
+      allow read: if isSignedIn() && isAdmin();
+      allow create: if isSignedIn(); // Allow writing from client services
+    }
+
+    // --- Legacy Request Events Collection ---
+    match /requestEvents/{eventId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+    }
+  }
+}

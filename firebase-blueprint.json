@@ -1,0 +1,26 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information for JPF-HR",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name of the user" },
+        "email": { "type": "string", "format": "email", "description": "User email" },
+        "phone": { "type": "string", "description": "Phone number" },
+        "role": { "type": "string", "enum": ["admin", "hr", "manager", "employee"], "description": "User access role" },
+        "isActive": { "type": "boolean", "description": "Whether the user is active in the system" },
+        "telegramChatId": { "type": "string", "description": "Telegram chat ID for notifications" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["name", "email", "role", "isActive", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Individual user profiles"
+    }
+  }
+}
