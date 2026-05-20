@@ -1,20 +1,176 @@
+
+---
+
+## 🔐 الأمان
+
+### ✅ الإجراءات الأمنية المطبقة:
+
+- 🔒 **Private Repository** - المشروع خاص ومحمي
+- 🔑 **Environment Variables** - جميع المفاتيح في `.env` (غير مرفوع)
+- 🛡️ **Firebase Security Rules** - قواعد أمان Firestore محكمة
+- 🔐 **Authentication** - مصادقة Firebase للمستخدمين
+- ✋ **Role-Based Access** - صلاحيات حسب الدور
+
+### ⚠️ تحذيرات مهمة:
+
+- ❌ **لا ترفع ملف `.env` أبداً على Git**
+- ❌ **لا تشارك Telegram Bot Token مع أحد**
+- ✅ **استخدم `.env.example` فقط كنموذج**
+- ✅ **راجع `firestore.rules` بشكل دوري**
+
+---
+
+## 📱 إعداد بوت تيليجرام (خطوة بخطوة)
+
+### 1️⃣ إنشاء البوت
+
+1. افتح تيليجرام وابحث عن **@BotFather**
+2. ابدأ محادثة واضغط `/start`
+3. أرسل الأمر `/newbot`
+4. أدخل **اسم البوت** (مثلاً: "JPF HR Notifications")
+5. أدخل **Username** للبوت (يجب أن ينتهي بـ `bot`)
+   - مثال: `jpf_hr_notifications_bot`
+6. احفظ الـ **Token** الذي سيرسله لك
+
+### 2️⃣ الحصول على Chat ID
+
+1. ابحث عن **@userinfobot** في تيليجرام
+2. ابدأ محادثة وسيرسل لك **Chat ID**
+3. احفظ الرقم (مثلاً: `218601139`)
+
+### 3️⃣ إعداد النظام
+
+1. ضع **Bot Token** في ملف `.env`
+2. اذهب لصفحة **إعدادات الإشعارات** في النظام
+3. أضف **Chat ID** في قواعد الإشعارات
+4. اختبر الإشعارات بإضافة طلب جديد
+
+---
+
+## 👥 الأدوار والصلاحيات
+
+| الدور | الصلاحيات | الوصف |
+|------|-----------|-------|
+| **Admin** | 🔓 صلاحيات كاملة | إدارة المستخدمين، الإعدادات، جميع العمليات |
+| **Manager** | 📊 إدارة متوسطة | إدارة الطلبات والقضايا، التقارير، الإشعارات |
+| **Employee** | 👁️ عرض محدود | عرض وإضافة الطلبات فقط |
+
+---
+
+## 📖 دليل الاستخدام السريع
+
+### إضافة طلب جديد
+
+1. اذهب إلى **الطلبات** من القائمة الجانبية
+2. اضغط **+ إضافة طلب جديد**
+3. املأ البيانات (اسم مقدم الطلب، التفاصيل، إلخ)
+4. اختر من سيستلم الإشعار (في قسم "📲 إشعارات تيليجرام")
+5. اضغط **حفظ**
+
+### تحويل طلب إلى قضية
+
+1. افتح الطلب من قائمة الطلبات
+2. اضغط **⚖️ تحويل لقضية تنفيذية**
+3. املأ بيانات القضية (المدعي، المدعى عليه، المبلغ)
+4. اضغط **تحويل**
+
+### إضافة سداد
+
+1. افتح القضية من قائمة القضايا
+2. اذهب لتبويب **💰 المدفوعات**
+3. اضغط **+ إضافة سداد**
+4. أدخل المبلغ والتاريخ
+5. اضغط **حفظ**
+
+---
+
+## 🐛 حل المشاكل الشائعة
+
+### المشكلة: "Firebase configuration is missing"
+
+**الحل:**
+- تأكد من وجود ملف `.env` في المجلد الرئيسي
+- تأكد من صحة البيانات في `.env`
+- أعد تشغيل السيرفر: `npm run dev`
+
+### المشكلة: "الإشعارات لا تصل"
+
+**الحل:**
+- تأكد من صحة `VITE_TELEGRAM_BOT_TOKEN`
+- تأكد من إضافة Chat ID في إعدادات الإشعارات
+- افتح Console وابحث عن رسائل الخطأ
+
+### المشكلة: "لا يمكن تسجيل الدخول"
+
+**الحل:**
+- تأكد من تفعيل Authentication في Firebase Console
+- تأكد من إضافة Email/Password كـ Sign-in method
+- راجع `firestore.rules` للتأكد من الصلاحيات
+
+---
+
+## 📞 الدعم والتواصل
+
+للدعم الفني والاستفسارات:
+
+- **GitHub Issues:** [فتح issue](https://github.com/hamany01/JPF-HR/issues)
+- **المطور:** [@hamany01](https://github.com/hamany01)
+- **Email:** abdulrahman@example.com
+
+---
+
+## 🤝 المساهمة
+
+هذا مشروع خاص. للمساهمة:
+
+1. اطلب دعوة من مالك المشروع
+2. Fork المشروع
+3. أنشئ Branch جديد (`git checkout -b feature/amazing-feature`)
+4. Commit التغييرات (`git commit -m 'إضافة ميزة رائعة'`)
+5. Push للـ Branch (`git push origin feature/amazing-feature`)
+6. افتح Pull Request
+
+---
+
+## 📊 الإحصائيات
+
+- 💻 **اللغة:** TypeScript 99.8%
+- 📦 **الاعتماديات:** ~30 حزمة
+- 📁 **الحجم:** ~15 MB (مع node_modules)
+- ⚡ **الأداء:** Fast (Vite + React 18)
+
+---
+
+## 📄 الترخيص
+
+هذا المشروع **خاص** - جميع الحقوق محفوظة © 2026 JPF-HR
+
+**ممنوع:**
+- ❌ إعادة التوزيع
+- ❌ الاستخدام التجاري بدون إذن
+- ❌ النسخ أو التعديل بدون ترخيص
+
+---
+
+## 🙏 شكر وتقدير
+
+تم بناء هذا المشروع باستخدام:
+
+- [React](https://react.dev/)
+- [Firebase](https://firebase.google.com/)
+- [Vite](https://vitejs.dev/)
+- [Tailwind CSS](https://tailwindcss.com/)
+- [Lucide Icons](https://lucide.dev/)
+- [Recharts](https://recharts.org/)
+
+---
+
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+
+**تم التطوير بواسطة:** [Abdulrahman Alnajjarbashun](https://github.com/hamany01)
+
+**آخر تحديث:** مايو 2026
+
+⭐ **إذا أعجبك المشروع، لا تنسَ وضع نجمة!** ⭐
+
 </div>
-
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/5fccf1f6-352e-43ce-80ab-989a6c3d595e
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
