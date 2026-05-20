@@ -115,7 +115,9 @@
 
 - **GitHub Issues:** [فتح issue](https://github.com/hamany01/JPF-HR/issues)
 - **المطور:** [@hamany01](https://github.com/hamany01)
-- **Email:** abdulrahman@example.com
+- **Email:** hamany01@gmai.com
+-  **mobile:** 0599222345
+-   **name:** abdulrahman salem basniny
 
 ---
 
