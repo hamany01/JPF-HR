@@ -20,25 +20,6 @@ export default defineConfig(({mode}) => {
       sourcemap: false,
       minify: 'esbuild',
       chunkSizeWarningLimit: 1000,
-      rollupOptions: {
-        output: {
-          // تقسيم ملفات الـ node_modules لتسريع التحميل الأول للمنصة وتقليل حجم الملفات (Code Splitting)
-          manualChunks(id) {
-            if (id.includes('node_modules')) {
-              if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
-                return 'vendor-react';
-              }
-              if (id.includes('firebase')) {
-                return 'vendor-firebase';
-              }
-              if (id.includes('recharts') || id.includes('d3')) {
-                return 'vendor-charts';
-              }
-              return 'vendor-fallback';
-            }
-          }
-        }
-      }
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
