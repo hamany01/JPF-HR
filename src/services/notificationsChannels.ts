@@ -301,7 +301,7 @@ function formatNotificationMessage(event: AppEvent, template?: string): string {
 
     default:
       const emoji = getEmojiForEventType(event.type as string);
-      return `${emoji} <b>إشعار مهم: حدث جديد</b>\n\n${event.message}\n\n#JPF_HR #${event.type}`;
+      return `${emoji} <b>إشعار مهم: حدث جديد</b>\n\n${event.message}\n\n#الشؤون_القانونية #${event.type}`;
   }
 }
 
@@ -433,7 +433,7 @@ export const buildWhatsAppLink = (phoneNumber: string, message: string) => {
 };
 
 export const getEventWhatsAppMessage = (event: AppEvent) => {
-  let msg = `*إشعار من نظام JPF-HR*\n\n`;
+  let msg = `*إشعار من نظام الشؤون القانونية*\n\n`;
   msg += `*الحدث:* ${event.message}\n`;
   msg += `*المرجع:* ${event.serialNumber}\n`;
   

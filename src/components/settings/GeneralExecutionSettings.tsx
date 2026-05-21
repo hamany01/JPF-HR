@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase/config';
-import { Loader2, Plus, Trash2, Save, List } from 'lucide-react';
+import { Loader2, Plus, Trash2, Save, Upload, RefreshCw } from 'lucide-react';
 
 export default function GeneralExecutionSettings() {
   const [loading, setLoading] = useState(true);
@@ -13,10 +13,12 @@ export default function GeneralExecutionSettings() {
 
   const [newTransactionType, setNewTransactionType] = useState('');
   const [newIdType, setNewIdType] = useState('');
+  const [logoBase64, setLogoBase64] = useState<string>('');
 
   const fetchSettings = async () => {
     setLoading(true);
     try {
+      // 1. جلب إعدادات المعاملات
       const docRef = doc(db, 'settings', 'execution');
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
@@ -32,6 +34,13 @@ export default function GeneralExecutionSettings() {
         };
         await setDoc(docRef, defaults, { merge: true });
         setSettings(defaults);
+      }
+
+      // 2. جلب الشعار المخصص (اللوجو) من مستند المظهر
+      const appearanceRef = doc(db, 'settings', 'appearance');
+      const appearanceSnap = await getDoc(appearanceRef);
+      if (appearanceSnap.exists()) {
+        setLogoBase64(appearanceSnap.data().logoBase64 || '');
       }
     } catch (error) {
       console.error("Error fetching settings:", error);
@@ -63,12 +72,72 @@ export default function GeneralExecutionSettings() {
     setSettings({ ...settings, [key]: updated });
   };
 
+  // معالجة ورفع اللوجو وتحويله للـ Base64 مضغوط ومحسن
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // التأكد من حجم الملف (تنبيه إذا كان أكبر من 3 ميجا قبل الضغط)
+    if (file.size > 3 * 1024 * 1024) {
+      alert("حجم الملف كبير جداً، يرجى اختيار صورة أصغر من 3 ميجابايت.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        // تحسين أبعاد اللوجو: الحد الأقصى للعرض 450 بكسل ليكون خفيفاً وسريع التنزيل
+        const MAX_WIDTH = 450;
+        if (width > MAX_WIDTH) {
+          height = (MAX_WIDTH / width) * height;
+          width = MAX_WIDTH;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          // تحويله لـ PNG مضغوط بجودة ممتازة
+          const compressedBase64 = canvas.toDataURL('image/png', 0.9);
+          setLogoBase64(compressedBase64);
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleClearLogo = () => {
+    setLogoBase64('');
+  };
+
   const saveSettings = async () => {
     setSubmitting(true);
     try {
-      const docRef = doc(db, 'settings', 'execution');
-      await setDoc(docRef, settings, { merge: true });
-      alert('تم حفظ الإعدادات بنجاح');
+      // 1. حفظ إعدادات المعاملات
+      const executionRef = doc(db, 'settings', 'execution');
+      await setDoc(executionRef, settings, { merge: true });
+
+      // 2. حفظ الشعار الجديد في مستند المظهر
+      const appearanceRef = doc(db, 'settings', 'appearance');
+      await setDoc(appearanceRef, { logoBase64: logoBase64 }, { merge: true });
+
+      // تحديث الـ localStorage للوجو في المتصفح الحالي للتطبيق بشكل فوري
+      if (logoBase64) {
+        localStorage.setItem('jpf_custom_logo', logoBase64);
+      } else {
+        localStorage.removeItem('jpf_custom_logo');
+      }
+
+      alert('تم حفظ الإعدادات والشعار بنجاح!');
+      // تحديث الصفحة تلقائياً لتطبيق اللوجو في الشريط الجانبي وكل واجهات الموقع فوراً
+      window.location.reload();
     } catch (error: any) {
       alert(`خطأ في الحفظ: ${error.message}`);
     }
@@ -83,7 +152,74 @@ export default function GeneralExecutionSettings() {
   );
 
   return (
-    <div className="space-y-12 animate-in fade-in duration-500">
+    <div className="space-y-12 animate-in fade-in duration-500" dir="rtl">
+      {/* قسم تعديل وتحميل شعار الموقع وهوية الشؤون القانونية */}
+      <section className="space-y-6 bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold text-slate-900">هوية وشعار النظام</h2>
+          <p className="text-sm text-slate-500">تحميل شعار مخصص بديل في الهيدر والقائمة الجانبية وصفحة تسجيل الدخول</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+          {/* صندوق رفع الملف والتحكم */}
+          <div className="space-y-4">
+            <div className="border-2 border-dashed border-slate-200 hover:border-indigo-400 rounded-2xl p-6 transition-all text-center bg-white shadow-inner relative">
+              <input 
+                type="file" 
+                accept="image/*" 
+                onChange={handleLogoUpload}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <div className="flex flex-col items-center gap-3">
+                <div className="p-3 bg-indigo-50 text-indigo-600 rounded-full">
+                  <Upload size={24} />
+                </div>
+                <div>
+                  <span className="text-sm font-black text-indigo-600">اضغط لرفع صورة الشعار</span>
+                  <p className="text-xs text-slate-400 mt-1">يدعم PNG, JPG, WebP أو SVG (أقل من 3 ميجا)</p>
+                </div>
+              </div>
+            </div>
+
+            {logoBase64 && (
+              <button 
+                type="button"
+                onClick={handleClearLogo}
+                className="w-full py-2.5 px-4 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2"
+              >
+                <Trash2 size={16} />
+                إزالة الشعار المخصص والعودة للوضع الافتراضي
+              </button>
+            )}
+          </div>
+
+          {/* صندوق استعراض الشعار الحالي */}
+          <div className="bg-white rounded-2xl p-6 border border-slate-100 flex flex-col items-center justify-center min-h-[160px] text-center shadow-sm">
+            <span className="text-xs font-bold text-slate-400 mb-4 block">معاينة الشعار الحالي في النظام:</span>
+            {logoBase64 ? (
+              <div className="p-4 bg-slate-900 rounded-2xl flex items-center justify-center min-h-[100px] w-full max-w-[280px]">
+                <img 
+                  src={logoBase64} 
+                  alt="Custom Logo Preview" 
+                  className="max-h-16 max-w-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="text-center py-4 space-y-3">
+                <div className="p-4 bg-slate-900 rounded-2xl flex items-center justify-center min-h-[100px] w-full max-w-[280px] mx-auto opacity-50">
+                  <img 
+                    src="/logo.png" 
+                    alt="Default Logo Preview" 
+                    className="max-h-14 max-w-full object-contain"
+                  />
+                </div>
+                <span className="text-xs font-semibold text-slate-500 block">يتم استخدام الشعار الافتراضي للنظام في السيرفر</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* Transaction Types */}
       <section className="space-y-6">
         <div className="space-y-1">
@@ -175,7 +311,7 @@ export default function GeneralExecutionSettings() {
           className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black shadow-xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
         >
           {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save size={20} />}
-          حفظ الإعدادات المتقدمة
+          حفظ التغييرات والشعار
         </button>
       </div>
     </div>
