@@ -120,5 +120,21 @@ service cloud.firestore {
       allow create: if isSignedIn();
       allow update: if isSignedIn();
     }
+
+    // --- Case Sessions Collection (for Reminders) ---
+    match /case_sessions/{sessionId} {
+      allow read: if isSignedIn();
+      allow create: if isAnyStaff();
+      allow update: if isSignedIn(); // Allow update for notification flags
+      allow delete: if isCompanyRole();
+    }
+
+    // --- Notifications Collection ---
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
   }
 }

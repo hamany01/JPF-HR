@@ -177,8 +177,10 @@ export default function CasePaymentsTab({
             paymentAmount: amountNum,
             remainingAmount: transactionResult.newRemaining,
             caseSerialNumber: transactionResult.requestSerialNumber,
+            paymentDate: new Date(form.date).toISOString(),
           },
           createdBy: user?.uid || '',
+          createdByName: profile?.name || 'مستخدم'
         });
 
         if (transactionResult.newRemaining <= 0) {
@@ -187,8 +189,12 @@ export default function CasePaymentsTab({
             caseSerialNumber: transactionResult.requestSerialNumber,
             type: 'case_paid_off',
             message: `تم سداد القضية ${transactionResult.requestSerialNumber} بالكامل. إجمالي المبلغ المحصل: ${transactionResult.newReceived} ريال.`,
-            payload: { receivedAmount: transactionResult.newReceived },
+            payload: { 
+              caseSerialNumber: transactionResult.requestSerialNumber,
+              totalCollected: transactionResult.newReceived 
+            },
             createdBy: user?.uid || '',
+            createdByName: profile?.name || 'مستخدم'
           });
         }
       }
@@ -243,6 +249,7 @@ export default function CasePaymentsTab({
           payload: { removedAmount: amount, remainingAmount: newRemaining },
           createdAt: serverTimestamp(),
           createdBy: user?.uid,
+          createdByName: profile?.name || 'مستخدم',
           seenBy: []
         });
       });

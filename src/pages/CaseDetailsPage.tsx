@@ -32,7 +32,7 @@ import {
 import { cn } from '../lib/utils';
 import CasePaymentsTab from '../components/CasePaymentsTab';
 
-type TabType = 'activities' | 'documents' | 'finance';
+type TabType = 'activities' | 'documents' | 'finance' | 'sessions';
 
 export default function CaseDetailsPage() {
   const { caseId } = useParams<{ caseId: string }>();
@@ -40,6 +40,7 @@ export default function CaseDetailsPage() {
   const { user, profile } = useAuth();
   const [caseData, setCaseData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [allUsers, setAllUsers] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<TabType>('activities');
   const [platformOptions, setPlatformOptions] = useState<string[]>([]);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -60,6 +61,12 @@ export default function CaseDetailsPage() {
   // Form states for adding items
   const [activityForm, setActivityForm] = useState({ description: '', type: 'note' });
   const [documentForm, setDocumentForm] = useState({ name: '', url: '', type: 'pdf' });
+  const [sessionForm, setSessionForm] = useState({ 
+    sessionDate: '', 
+    location: '', 
+    type: 'استماع',
+    notes: ''
+  });
 
   const [statusOptions, setStatusOptions] = useState<any[]>([]);
   const [decisionOptions, setDecisionOptions] = useState<any[]>([
@@ -120,7 +127,21 @@ export default function CaseDetailsPage() {
     fetchPlatforms();
     fetchStatuses();
     fetchDecisions();
+    fetchAllUsers();
   }, [caseId]);
+
+  const fetchAllUsers = async () => {
+    try {
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const usersMap: Record<string, string> = {};
+      usersSnap.docs.forEach(doc => {
+        usersMap[doc.id] = doc.data().name || 'مستخدم';
+      });
+      setAllUsers(usersMap);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+    }
+  };
 
   const fetchDecisions = async () => {
     try {
@@ -250,12 +271,14 @@ export default function CaseDetailsPage() {
           type: 'case_status_changed',
           message: `تم تغيير حالة القضية ${caseData.requestSerialNumber || ''} من ${caseData.statusLabel || 'غير معروف'} إلى ${selectedStatus?.label || editForm.statusLabel}.`,
           payload: { 
+            caseSerialNumber: caseData.requestSerialNumber || '',
             oldStatus: caseData.status, 
             newStatus: editForm.status,
             oldStatusLabel: caseData.statusLabel,
             newStatusLabel: selectedStatus?.label || editForm.statusLabel
           },
-          createdBy: user?.uid || ''
+          createdBy: user?.uid || '',
+          createdByName: profile?.name || 'مستخدم'
         });
       }
 
@@ -281,6 +304,29 @@ export default function CaseDetailsPage() {
 
     if (activeTab === 'activities') data = { ...data, ...activityForm };
     if (activeTab === 'documents') data = { ...data, ...documentForm };
+    
+    if (activeTab === 'sessions') {
+      data = { 
+        ...data, 
+        ...sessionForm,
+        sessionDate: Timestamp.fromDate(new Date(sessionForm.sessionDate)),
+        caseId: caseId,
+        caseSerialNumber: caseData.requestSerialNumber || '',
+        defendantName: caseData.defendantName,
+        applicantName: caseData.applicantName,
+        notification7Days: false,
+        notification1Day: false,
+        notification30Min: false,
+        status: 'scheduled'
+      };
+      
+      try {
+        // Also add to global sessions collection for the reminder hook
+        await addDoc(collection(db, 'case_sessions'), data);
+      } catch (err) {
+        console.error("Error adding to global sessions:", err);
+      }
+    }
 
     try {
       await addDoc(collection(db, 'cases', caseId, activeTab), data);
@@ -288,6 +334,7 @@ export default function CaseDetailsPage() {
       // Reset forms
       setActivityForm({ description: '', type: 'note' });
       setDocumentForm({ name: '', url: '', type: 'pdf' });
+      setSessionForm({ sessionDate: '', location: '', type: 'استماع', notes: '' });
       
       // Refresh tab data
       const q = query(collection(db, 'cases', caseId, activeTab), orderBy('createdAt', 'desc'));
@@ -303,6 +350,7 @@ export default function CaseDetailsPage() {
   const tabs = [
     { id: 'activities', label: 'النشاطات', icon: ActivityIcon },
     { id: 'documents', label: 'المستندات', icon: FileText },
+    { id: 'sessions', label: 'الجلسات', icon: Calendar },
     { id: 'finance', label: 'الحركات المالية', icon: CreditCard },
   ];
 
@@ -639,9 +687,15 @@ export default function CaseDetailsPage() {
                         <h4 className="font-bold text-slate-900 text-lg leading-snug">
                           {activeTab === 'documents' ? item.name : item.description}
                         </h4>
-                        <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-2">
-                          <Clock size={12} />
-                          {item.createdAt?.toDate()?.toLocaleString('ar-EG')}
+                        <div className="flex items-center gap-4 text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-2">
+                          <div className="flex items-center gap-1">
+                            <Clock size={12} />
+                            {item.createdAt?.toDate()?.toLocaleString('ar-EG')}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <User size={12} />
+                            <span>بواسطة: {item.createdByName || allUsers[item.createdBy] || '...'}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -649,6 +703,36 @@ export default function CaseDetailsPage() {
                     {activeTab === 'activities' && (
                       <div className="mt-2 text-xs font-bold text-indigo-600 px-3 py-1 bg-white border border-indigo-50 rounded-lg w-fit">
                         {item.type}
+                      </div>
+                    )}
+
+                    {activeTab === 'sessions' && (
+                      <div className="space-y-4">
+                        <div className="flex flex-wrap gap-4 mt-2">
+                          <div className="flex items-center gap-2 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100">
+                             <Calendar size={14} className="text-indigo-600" />
+                             <span className="text-xs font-bold text-indigo-700">{renderDate(item.sessionDate)}</span>
+                          </div>
+                          {item.location && (
+                            <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                               <Globe size={14} className="text-slate-500" />
+                               <span className="text-xs font-bold text-slate-700">{item.location}</span>
+                            </div>
+                          )}
+                        </div>
+                        {item.notes && (
+                          <p className="text-sm text-slate-500 bg-slate-50 p-4 rounded-2xl border border-slate-100 border-dashed">
+                            {item.notes}
+                          </p>
+                        )}
+                        <div className="flex items-center justify-between pt-2">
+                           <span className="text-[10px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">{item.type}</span>
+                           <div className="flex gap-2">
+                              {item.notification7Days && <span className="text-[8px] bg-green-50 text-green-600 px-1 rounded border border-green-100">7أ</span>}
+                              {item.notification1Day && <span className="text-[8px] bg-green-50 text-green-600 px-1 rounded border border-green-100">1ي</span>}
+                              {item.notification30Min && <span className="text-[8px] bg-green-50 text-green-600 px-1 rounded border border-green-100">30د</span>}
+                           </div>
+                        </div>
                       </div>
                     )}
                     
@@ -912,11 +996,57 @@ export default function CaseDetailsPage() {
             >
               <div className="px-10 py-8 border-b border-slate-100">
                 <h3 className="text-xl font-black text-slate-900">
-                  إضافة {activeTab === 'activities' ? 'نشاط جديد' : activeTab === 'documents' ? 'مستند جديد' : 'حركة مالية'}
+                  إضافة {activeTab === 'activities' ? 'نشاط جديد' : activeTab === 'documents' ? 'مستند جديد' : activeTab === 'sessions' ? 'جلسة جديدة' : 'حركة مالية'}
                 </h3>
               </div>
 
               <form onSubmit={handleAddItem} className="p-10 space-y-6 text-right">
+                {activeTab === 'sessions' && (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">موعد الجلسة</label>
+                      <input 
+                        required
+                        type="datetime-local"
+                        value={sessionForm.sessionDate}
+                        onChange={(e) => setSessionForm({...sessionForm, sessionDate: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none font-bold text-slate-700"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">مكان الجلسة</label>
+                      <input 
+                        type="text"
+                        value={sessionForm.location}
+                        onChange={(e) => setSessionForm({...sessionForm, location: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-700"
+                        placeholder="قاعة / رابط إلكتروني"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">نوع الجلسة</label>
+                       <select 
+                         value={sessionForm.type}
+                         onChange={(e) => setSessionForm({...sessionForm, type: e.target.value})}
+                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 font-black"
+                       >
+                         <option value="استماع">استماع</option>
+                         <option value="مرافعة">مرافعة</option>
+                         <option value="نطق بالحكم">نطق بالحكم</option>
+                         <option value="صلح">صلح</option>
+                       </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">ملاحظات إضافية</label>
+                      <textarea 
+                        value={sessionForm.notes}
+                        onChange={(e) => setSessionForm({...sessionForm, notes: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none h-24 text-sm font-medium"
+                      />
+                    </div>
+                  </>
+                )}
+
                 {activeTab === 'activities' && (
                   <>
                     <div className="space-y-2">

@@ -6,7 +6,8 @@ import {
   limit, 
   onSnapshot, 
   where,
-  Timestamp
+  Timestamp,
+  getDocs
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
@@ -64,11 +65,27 @@ export default function DashboardPage() {
   const [requests, setRequests] = useState<any[]>([]);
   const [cases, setCases] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
+  const [allUsers, setAllUsers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   // Real-time data fetching
   useEffect(() => {
     setLoading(true);
+
+    const fetchAllUsers = async () => {
+      try {
+        const snapshot = await getDocs(collection(db, 'users'));
+        const usersMap: Record<string, string> = {};
+        snapshot.docs.forEach(doc => {
+          usersMap[doc.id] = doc.data().name || 'مستخدم';
+        });
+        setAllUsers(usersMap);
+      } catch (err) {
+        console.error("Error fetching users:", err);
+      }
+    };
+    
+    fetchAllUsers();
     
     // Listen to requests
     const qRequests = query(collection(db, 'requests'), orderBy('createdAt', 'desc'));
@@ -427,6 +444,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex-1 space-y-1">
                    <p className="text-xs font-bold text-slate-700 leading-relaxed">{event.message}</p>
+                   <p className="text-[10px] font-black text-slate-400 font-mono italic">بواسطة: {event.createdByName || allUsers[event.createdBy] || '...'}</p>
                    <div className="flex items-center justify-between">
                      <span className="text-[10px] text-slate-400 font-mono italic">
                         {event.createdAt && typeof event.createdAt.toDate === 'function' ? event.createdAt.toDate().toLocaleString('ar-SA', { hour: '2-digit', minute: '2-digit' }) : '...'}

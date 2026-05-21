@@ -14,9 +14,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { createRequestEvent } from '../services/eventService';
+import { createRequestEvent, createCaseEvent } from '../services/eventService';
 import { buildWhatsAppLink, getEventWhatsAppMessage } from '../services/notificationsChannels';
 import { 
   FileText, 
@@ -40,6 +40,7 @@ import {
   MessageSquare,
   ChevronDown,
   ChevronUp,
+  Archive as ArchiveIcon,
   History as HistoryIcon
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -113,6 +114,7 @@ export default function RequestsListPage() {
   const [platformOptions, setPlatformOptions] = useState<string[]>([]);
   const [requestors, setRequestors] = useState<{ id: string, name: string }[]>([]);
   const [transactionTypes, setTransactionTypes] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
   
   const [filters, setFilters] = useState({
     status: 'الكل',
@@ -122,6 +124,18 @@ export default function RequestsListPage() {
 
   const { user, profile } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestIdParam = searchParams.get('id');
+
+  useEffect(() => {
+    if (requestIdParam && requests.length > 0) {
+      const found = requests.find(r => r.id === requestIdParam);
+      if (found) {
+        setSelectedRequest(found);
+        setIsDetailsOpen(true);
+      }
+    }
+  }, [requestIdParam, requests]);
 
   const canCreateRequest = ['admin', 'company_manager', 'company_assistant'].includes(profile?.role || '');
   const canReviewRequest = ['admin', 'law_manager'].includes(profile?.role || '');
@@ -346,6 +360,7 @@ export default function RequestsListPage() {
             customRecipients: hasCustomSelection ? Array.from(new Set(recipientChatIds)) : undefined
           },
           createdBy: user?.uid || '',
+          createdByName: profile?.name || 'مستخدم'
         });
       }
 
@@ -400,8 +415,13 @@ export default function RequestsListPage() {
         requestSerialNumber: selectedRequest.requestSerialNumber,
         type: 'request_approved_preliminary' as any,
         message: `تم قبول الطلب ${selectedRequest.requestSerialNumber} مبدئياً بواسطة ${profile?.name}.`,
-        payload: { approvalNote },
-        createdBy: user?.uid || ''
+        payload: { 
+          serialNumber: selectedRequest.requestSerialNumber,
+          applicantName: selectedRequest.clientName,
+          approvalNote 
+        },
+        createdBy: user?.uid || '',
+        createdByName: profile?.name || 'مستخدم'
       });
 
       setIsApproveModalOpen(false);
@@ -422,10 +442,10 @@ export default function RequestsListPage() {
     if (selectedRequest.status !== 'approved_preliminary') return;
     
     setIsSubmitting(true);
+    const caseRef = doc(collection(db, 'cases'));
     try {
       await runTransaction(db, async (transaction) => {
         // 1. Create Case
-        const caseRef = doc(collection(db, 'cases'));
         const caseData = {
           requestSerialNumber: selectedRequest.requestSerialNumber,
           najizClaimNumber: selectedRequest.najizClaimNumber || '',
@@ -464,40 +484,42 @@ export default function RequestsListPage() {
           convertedAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
+      });
 
-        // 3. Log conversion event
-        transaction.set(doc(collection(db, 'appEvents')), {
-          category: 'request',
+      // 3. Log conversion event (outside transaction to trigger notifications)
+      await createRequestEvent({
+        requestId: selectedRequest.id,
+        requestSerialNumber: selectedRequest.requestSerialNumber,
+        type: 'request_converted_to_case' as any,
+        message: `تم تحويل الطلب ${selectedRequest.requestSerialNumber} إلى قضية تنفيذية بواسطة ${profile?.name}.`,
+        payload: { 
           requestId: selectedRequest.id,
           serialNumber: selectedRequest.requestSerialNumber,
-          type: 'request_converted_to_case',
-          message: `تم قبول الطلب ${selectedRequest.requestSerialNumber} وإنشاء قضية تنفيذية برقم ${caseRef.id}.`,
-          payload: { 
-            caseId: caseRef.id,
-            externalCaseNumber: convertData.externalCaseNumber,
-            platform: selectedRequest.platform 
-          },
-          createdAt: serverTimestamp(),
-          createdBy: user?.uid,
-          seenBy: []
-        });
-
-        // 4. Log case created event
-        transaction.set(doc(collection(db, 'appEvents')), {
-          category: 'case',
           caseId: caseRef.id,
-          serialNumber: selectedRequest.requestSerialNumber, // Use request serial as initial reference
-          type: 'case_created',
-          message: `تم إنشاء قضية تنفيذية جديدة للمنفذ ضده ${selectedRequest.defendantName} بمبلغ ${selectedRequest.claimAmount} ريال.`,
-          payload: { 
-            requestId: selectedRequest.id,
-            defendantName: selectedRequest.defendantName,
-            claimAmount: selectedRequest.claimAmount
-          },
-          createdAt: serverTimestamp(),
-          createdBy: user?.uid,
-          seenBy: []
-        });
+          caseSerialNumber: convertData.externalCaseNumber,
+          applicantName: selectedRequest.clientName,
+          platform: selectedRequest.platform 
+        },
+        createdBy: user?.uid || '',
+        createdByName: profile?.name || 'مستخدم'
+      });
+
+      // 4. Log case created event
+      await createCaseEvent({
+        caseId: caseRef.id,
+        caseSerialNumber: convertData.externalCaseNumber,
+        type: 'case_created' as any,
+        message: `تم إنشاء قضية تنفيذية جديدة للمنفذ ضده ${selectedRequest.defendantName} بمبلغ ${selectedRequest.claimAmount} ريال بواسطة ${profile?.name}.`,
+        payload: { 
+          caseId: caseRef.id,
+          requestId: selectedRequest.id,
+          caseSerialNumber: convertData.externalCaseNumber,
+          plaintiff: selectedRequest.clientName,
+          defendant: selectedRequest.defendantName,
+          totalAmount: selectedRequest.claimAmount
+        },
+        createdBy: user?.uid || '',
+        createdByName: profile?.name || 'مستخدم'
       });
 
       alert('تم تحويل الطلب إلى ملف قضية تنفيذية بنجاح');
@@ -532,8 +554,13 @@ export default function RequestsListPage() {
         requestSerialNumber: selectedRequest.requestSerialNumber,
         type: 'request_rejected',
         message: `تم رفض الطلب ${selectedRequest.requestSerialNumber}. السبب: ${rejectionReason}`,
-        payload: { rejectionReason },
-        createdBy: user?.uid || ''
+        payload: { 
+          serialNumber: selectedRequest.requestSerialNumber,
+          applicantName: selectedRequest.clientName,
+          rejectionReason 
+        },
+        createdBy: user?.uid || '',
+        createdByName: profile?.name || 'مستخدم'
       });
 
       setIsRejectModalOpen(false);
@@ -574,10 +601,13 @@ export default function RequestsListPage() {
         type: 'request_reactivated',
         message: `تم إعادة تفعيل الطلب ${selectedRequest.requestSerialNumber}. السبب: ${reactivateData.reason}`,
         payload: { 
+          serialNumber: selectedRequest.requestSerialNumber,
+          applicantName: selectedRequest.clientName,
           reactivatedReason: reactivateData.reason,
           attachmentsUpdated: reactivateData.attachmentsUpdated 
         },
-        createdBy: user?.uid || ''
+        createdBy: user?.uid || '',
+        createdByName: profile?.name || 'مستخدم'
       });
 
       setIsReactivateModalOpen(false);
@@ -597,6 +627,38 @@ export default function RequestsListPage() {
     if (!filters.requestSerialNumber) return true;
     return req.requestSerialNumber?.includes(filters.requestSerialNumber);
   });
+
+  const activeRequests = filteredRequests.filter(r => r.status !== 'converted_to_case' && r.status !== 'archived' && r.status !== 'rejected');
+  const archivedRequests = filteredRequests.filter(r => r.status === 'converted_to_case' || r.status === 'archived' || r.status === 'rejected');
+  const displayedRequests = activeTab === 'active' ? activeRequests : archivedRequests;
+
+  const handleArchiveRequest = async (e: React.MouseEvent, reqId: string, reqData: any) => {
+    e.stopPropagation();
+    if (!window.confirm('هل أنت متأكد من أرشفة هذا الطلب؟')) return;
+    
+    try {
+      await updateDoc(doc(db, 'requests', reqId), {
+        status: 'archived',
+        statusLabel: 'مؤرشف',
+        archivedAt: serverTimestamp(),
+        archivedBy: user?.uid
+      });
+
+      await createRequestEvent({
+        requestId: reqId,
+        requestSerialNumber: reqData.requestSerialNumber || '',
+        type: 'request_archived' as any,
+        message: `تم أرشفة الطلب بواسطة ${profile?.name}.`,
+        createdBy: user?.uid || '',
+        createdByName: profile?.name || 'مستخدم'
+      });
+
+      fetchRequests();
+    } catch (err) {
+      console.error("Error archiving request:", err);
+      alert("حدث خطأ أثناء الأرشفة");
+    }
+  };
 
   const getStatusBadge = (status: string, reactivated?: boolean) => {
     if (status === 'pending' && reactivated) return 'bg-indigo-50 text-indigo-700 border-indigo-100';
@@ -645,6 +707,32 @@ export default function RequestsListPage() {
             <span>إضافة طلب جديد</span>
           </button>
         )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-4 border-b border-slate-100 mb-6">
+        <button
+          onClick={() => setActiveTab('active')}
+          className={cn(
+            "px-6 py-4 -mb-px font-bold text-sm transition-all relative",
+            activeTab === 'active' 
+              ? "text-indigo-600 border-b-2 border-indigo-600" 
+              : "text-slate-400 hover:text-slate-600"
+          )}
+        >
+          الطلبات النشطة ({activeRequests.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('archived')}
+          className={cn(
+            "px-6 py-4 -mb-px font-bold text-sm transition-all relative",
+            activeTab === 'archived' 
+              ? "text-red-600 border-b-2 border-red-600" 
+              : "text-slate-400 hover:text-slate-600"
+          )}
+        >
+          الأرشيف ({archivedRequests.length})
+        </button>
       </div>
 
       {/* Filter Bar */}
@@ -725,9 +813,9 @@ export default function RequestsListPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredRequests.length === 0 ? (
+              {displayedRequests.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-24 text-center">
+                  <td colSpan={9} className="px-6 py-24 text-center">
                     <div className="flex flex-col items-center gap-4 opacity-30">
                       <FileText size={64} />
                       <p className="font-bold text-lg">لا يوجد طلبات حالياً</p>
@@ -735,14 +823,17 @@ export default function RequestsListPage() {
                   </td>
                 </tr>
               ) : (
-                filteredRequests.map((req) => (
+                displayedRequests.map((req) => (
                   <tr 
                     key={req.id}
                     onClick={() => {
                       setSelectedRequest(req);
                       setIsDetailsOpen(true);
                     }}
-                    className="hover:bg-slate-50/50 transition-all cursor-pointer group"
+                    className={cn(
+                      "hover:bg-slate-50/50 transition-all cursor-pointer group",
+                      (req.status === 'archived' || req.status === 'rejected' || req.status === 'converted_to_case') ? "bg-red-50/20 text-rose-900" : "text-slate-700"
+                    )}
                   >
                     <td className="px-6 py-5 text-center">
                       <div className="flex flex-col items-center">
@@ -789,7 +880,16 @@ export default function RequestsListPage() {
                       {req.createdAt?.toDate().toLocaleDateString('en-GB')}
                     </td>
                     <td className="px-6 py-5 text-left">
-                      <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center justify-end gap-2">
+                        {req.status !== 'archived' && req.status !== 'converted_to_case' && req.status !== 'rejected' && (
+                          <button
+                            onClick={(e) => handleArchiveRequest(e, req.id, req)}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                            title="أرشفة"
+                          >
+                            <ArchiveIcon size={16} />
+                          </button>
+                        )}
                         {req.caseId ? (
                           <button 
                             onClick={(e) => {

@@ -12,12 +12,14 @@ interface CreateEventParams {
   message: string;
   payload?: Record<string, any>;
   createdBy: string;
+  createdByName?: string;
 }
 
 const createEvent = async (params: CreateEventParams) => {
   try {
     const eventData = {
       ...params,
+      createdByName: params.createdByName || 'مستخدم النظام',
       createdAt: serverTimestamp(),
       seenBy: []
     };
@@ -45,6 +47,7 @@ export const createRequestEvent = async (params: {
   message: string;
   payload?: Record<string, any>;
   createdBy: string;
+  createdByName?: string;
 }) => {
   return createEvent({
     category: 'request',
@@ -53,7 +56,8 @@ export const createRequestEvent = async (params: {
     type: params.type,
     message: params.message,
     payload: params.payload,
-    createdBy: params.createdBy
+    createdBy: params.createdBy,
+    createdByName: params.createdByName
   });
 };
 
@@ -64,6 +68,7 @@ export const createCaseEvent = async (params: {
   message: string;
   payload?: Record<string, any>;
   createdBy: string;
+  createdByName?: string;
 }) => {
   return createEvent({
     category: 'case',
@@ -72,6 +77,7 @@ export const createCaseEvent = async (params: {
     type: params.type,
     message: params.message,
     payload: params.payload,
-    createdBy: params.createdBy
+    createdBy: params.createdBy,
+    createdByName: params.createdByName
   });
 };

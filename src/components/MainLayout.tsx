@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
+import { useSessionReminders } from '../hooks/useSessionReminders';
 import NotificationsBell from './notifications/NotificationsBell';
 
 export default function MainLayout() {
@@ -22,6 +23,8 @@ export default function MainLayout() {
   const location = useLocation();
   const { profile, isAdmin } = useAuth();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  useSessionReminders();
 
   const handleLogout = async () => {
     await signOut(auth);

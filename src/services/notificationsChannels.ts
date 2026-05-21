@@ -182,8 +182,127 @@ function formatNotificationMessage(event: AppEvent, template?: string): string {
       .replace('{id}', event.id || '');
   }
   
-  const emoji = getEmojiForEventType(event.type as string);
-  return `${emoji} <b>إشعار مهم: حدث جديد</b>\n\n${event.message}\n\n#JPF_HR #${event.type}`;
+  const BASE_URL = window.location.origin;
+  const { type, payload, serialNumber, requestId, caseId } = event;
+  const entityId = requestId || caseId || event.id;
+
+  // Use toLocaleString for consistent Arabic formatting
+  const dateStr = new Date().toLocaleDateString('ar-SA');
+  const timeStr = new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+
+  switch (type) {
+    case 'request_created':
+      return `
+<b>🆕 طلب جديد في النظام</b>
+
+📋 <b>رقم الطلب:</b> ${payload?.serialNumber || serialNumber}
+👤 <b>مقدم الطلب:</b> ${payload?.applicantName || '—'}
+📅 <b>التاريخ:</b> ${dateStr}
+⏰ <b>الوقت:</b> ${timeStr}
+
+🔗 <a href="${BASE_URL}/requests?id=${entityId}">عرض تفاصيل الطلب</a>
+`.trim();
+
+    case 'request_rejected':
+      return `
+<b>❌ تم رفض طلب</b>
+
+📋 <b>رقم الطلب:</b> ${payload?.serialNumber || serialNumber}
+👤 <b>مقدم الطلب:</b> ${payload?.applicantName || '—'}
+📝 <b>سبب الرفض:</b> ${payload?.rejectionReason || 'غير محدد'}
+📅 <b>التاريخ:</b> ${dateStr}
+
+🔗 <a href="${BASE_URL}/requests?id=${entityId}">عرض الطلب المرفوض</a>
+`.trim();
+
+    case 'request_converted_to_case':
+      return `
+<b>⚖️ تحويل طلب إلى قضية تنفيذية</b>
+
+📋 <b>رقم الطلب:</b> ${payload?.serialNumber || serialNumber}
+⚖️ <b>رقم القضية:</b> ${payload?.caseSerialNumber || '—'}
+👤 <b>العميل:</b> ${payload?.applicantName || '—'}
+📅 <b>تاريخ التحويل:</b> ${dateStr}
+
+🔗 <a href="${BASE_URL}/cases/${payload?.caseId || entityId}">عرض القضية</a>
+`.trim();
+
+    case 'case_created':
+      return `
+<b>⚖️ قضية تنفيذية جديدة</b>
+
+⚖️ <b>رقم القضية:</b> ${payload?.caseSerialNumber || serialNumber}
+👤 <b>المدعي:</b> ${payload?.plaintiff || 'غير محدد'}
+👥 <b>المدعى عليه:</b> ${payload?.defendant || 'غير محدد'}
+💰 <b>المبلغ المطالب به:</b> ${payload?.totalAmount?.toLocaleString('ar-SA') || '—'} ريال
+📅 <b>التاريخ:</b> ${dateStr}
+
+🔗 <a href="${BASE_URL}/cases/${entityId}">عرض تفاصيل القضية</a>
+`.trim();
+
+    case 'payment_added':
+      return `
+<b>💵 سداد جديد</b>
+
+⚖️ <b>رقم القضية:</b> ${payload?.caseSerialNumber || serialNumber}
+💰 <b>مبلغ السداد:</b> ${payload?.paymentAmount?.toLocaleString('ar-SA') || '—'} ريال
+📊 <b>المتبقي:</b> ${payload?.remainingAmount?.toLocaleString('ar-SA') || '—'} ريال
+📅 <b>تاريخ السداد:</b> ${payload?.paymentDate ? new Date(payload.paymentDate).toLocaleDateString('ar-SA') : dateStr}
+
+🔗 <a href="${BASE_URL}/cases/${entityId}">عرض القضية</a>
+`.trim();
+
+    case 'case_paid_off':
+      return `
+<b>🎉 تم سداد القضية بالكامل</b>
+
+⚖️ <b>رقم القضية:</b> ${payload?.caseSerialNumber || serialNumber}
+💰 <b>إجمالي المحصل:</b> ${payload?.totalCollected?.toLocaleString('ar-SA') || payload?.receivedAmount?.toLocaleString('ar-SA') || '—'} ريال
+📅 <b>تاريخ الإغلاق:</b> ${dateStr}
+
+✅ <b>الحالة:</b> مغلقة - تم التحصيل بالكامل
+
+🔗 <a href="${BASE_URL}/cases/${entityId}">عرض تفاصيل القضية</a>
+`.trim();
+
+    case 'request_reactivated':
+      return `
+<b>🔄 إعادة تفعيل طلب</b>
+
+📋 <b>رقم الطلب:</b> ${payload?.serialNumber || serialNumber}
+👤 <b>مقدم الطلب:</b> ${payload?.applicantName || '—'}
+📅 <b>تاريخ إعادة التفعيل:</b> ${dateStr}
+
+🔗 <a href="${BASE_URL}/requests?id=${entityId}">عرض الطلب</a>
+`.trim();
+
+    case 'request_approved_preliminary':
+      return `
+<b>✅ قبول مبدئي لطلب</b>
+
+📋 <b>رقم الطلب:</b> ${payload?.serialNumber || serialNumber}
+👤 <b>مقدم الطلب:</b> ${payload?.applicantName || '—'}
+📅 <b>تاريخ القبول:</b> ${dateStr}
+
+🔗 <a href="${BASE_URL}/requests?id=${entityId}">عرض الطلب</a>
+`.trim();
+
+    case 'case_status_changed':
+      return `
+<b>🔄 تغيير حالة قضية</b>
+
+⚖️ <b>رقم القضية:</b> ${payload?.caseSerialNumber || serialNumber}
+📊 <b>الحالة السابقة:</b> ${payload?.oldStatusLabel || payload?.oldStatus || '—'}
+➡️ <b>الحالة الجديدة:</b> ${payload?.newStatusLabel || payload?.newStatus || '—'}
+📅 <b>التاريخ:</b> ${dateStr}
+
+🔗 <a href="${BASE_URL}/cases/${entityId}">عرض القضية</a>
+`.trim();
+
+    default:
+      const emoji = getEmojiForEventType(event.type as string);
+      return `${emoji} <b>إشعار مهم: حدث جديد</b>\n\n${event.message}\n\n#JPF_HR #${event.type}`;
+  }
 }
 
 function getEmojiForEventType(type: string): string {

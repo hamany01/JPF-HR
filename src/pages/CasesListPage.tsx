@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, runTransaction, doc, getDoc, Timestamp, where } from 'firebase/firestore';
+import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, runTransaction, doc, getDoc, Timestamp, where, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, Plus, Search, Filter, Loader2, X, ChevronLeft, UploadCloud } from 'lucide-react';
+import { FileText, Plus, Search, Filter, Loader2, X, ChevronLeft, UploadCloud, Archive } from 'lucide-react';
 import { cn } from '../lib/utils';
 import DataImporter from '../components/DataImporter';
 import CasesDashboard from '../components/cases/CasesDashboard';
+import { createCaseEvent } from '../services/eventService';
 
 export default function CasesListPage() {
   const [cases, setCases] = useState<any[]>([]);
@@ -16,6 +17,7 @@ export default function CasesListPage() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [platformOptions, setPlatformOptions] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
   const [filters, setFilters] = useState({
     phone: '',
     nationality: 'الكل',
@@ -288,6 +290,38 @@ export default function CasesListPage() {
     return matchesPhone && matchesRequest && matchesName;
   });
 
+  const activeCases = filteredCases.filter(c => c.status !== 'closed' && c.status !== 'archived');
+  const archivedCases = filteredCases.filter(c => c.status === 'closed' || c.status === 'archived');
+  const displayedCases = activeTab === 'active' ? activeCases : archivedCases;
+
+  const handleArchiveCase = async (e: React.MouseEvent, caseId: string, caseData: any) => {
+    e.stopPropagation();
+    if (!window.confirm('هل أنت متأكد من أرشفة هذه القضية؟')) return;
+    
+    try {
+      await updateDoc(doc(db, 'cases', caseId), {
+        status: 'archived',
+        statusLabel: 'مؤرشفة',
+        archivedAt: serverTimestamp(),
+        archivedBy: user?.uid
+      });
+
+      await createCaseEvent({
+        caseId: caseId,
+        caseSerialNumber: caseData.serialNumber || '',
+        type: 'case_archived' as any,
+        message: `تم أرشفة القضية بواسطة ${profile?.name}.`,
+        createdBy: user?.uid || '',
+        createdByName: profile?.name || 'مستخدم'
+      });
+
+      fetchCases();
+    } catch (err) {
+      console.error("Error archiving case:", err);
+      alert("حدث خطأ أثناء الأرشفة");
+    }
+  };
+
   if (loading && cases.length === 0) return (
     <div className="flex flex-col items-center justify-center h-64 gap-4">
       <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
@@ -325,6 +359,32 @@ export default function CasesListPage() {
       </div>
 
       <CasesDashboard cases={filteredCases} />
+
+      {/* Tabs */}
+      <div className="flex gap-4 border-b border-slate-100 mb-6">
+        <button
+          onClick={() => setActiveTab('active')}
+          className={cn(
+            "px-6 py-4 -mb-px font-bold text-sm transition-all relative",
+            activeTab === 'active' 
+              ? "text-indigo-600 border-b-2 border-indigo-600" 
+              : "text-slate-400 hover:text-slate-600"
+          )}
+        >
+          القضايا النشطة ({activeCases.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('archived')}
+          className={cn(
+            "px-6 py-4 -mb-px font-bold text-sm transition-all relative",
+            activeTab === 'archived' 
+              ? "text-red-600 border-b-2 border-red-600" 
+              : "text-slate-400 hover:text-slate-600"
+          )}
+        >
+          الأرشيف ({archivedCases.length})
+        </button>
+      </div>
 
       {/* Filter Bar */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
@@ -464,15 +524,18 @@ export default function CasesListPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filteredCases.map((item) => (
+            {displayedCases.map((item) => (
               <tr 
                 key={item.id} 
-                className="hover:bg-slate-50/50 transition-colors cursor-pointer group text-sm text-slate-700 font-medium"
+                className={cn(
+                  "hover:bg-slate-50/50 transition-colors cursor-pointer group text-sm font-medium",
+                  (item.status === 'closed' || item.status === 'archived') ? "bg-red-50/30 text-rose-900" : "text-slate-700"
+                )}
                 onClick={() => navigate(`/cases/${item.id}`)}
               >
                 <td className="px-5 py-5">
                   <div className="flex flex-col">
-                    <span className="font-mono font-black text-indigo-600 line-clamp-1">{item.requestSerialNumber || item.requestNumber || '—'}</span>
+                    <span className={cn("font-mono font-black line-clamp-1", (item.status === 'closed' || item.status === 'archived') ? "text-rose-600" : "text-indigo-600")}>{item.requestSerialNumber || item.requestNumber || '—'}</span>
                     <div className="flex flex-col gap-0.5">
                       {item.electronicReferenceNumber && <span className="text-[10px] text-indigo-500 font-mono font-bold">المرجع: {item.electronicReferenceNumber}</span>}
                       {item.najizClaimNumber && <span className="text-[10px] text-slate-400 font-mono">ناجز: {item.najizClaimNumber}</span>}
@@ -529,12 +592,23 @@ export default function CasesListPage() {
                   {item.executionProgress || '—'}
                 </td>
                 <td className="px-5 py-5 text-left">
-                  <ChevronLeft size={18} className="text-slate-300 group-hover:text-indigo-600 transition-colors" />
+                  <div className="flex items-center justify-end gap-2">
+                    {item.status !== 'archived' && item.status !== 'closed' && (
+                      <button
+                        onClick={(e) => handleArchiveCase(e, item.id, item)}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                        title="أرشفة"
+                      >
+                        <Archive size={16} />
+                      </button>
+                    )}
+                    <ChevronLeft size={18} className="text-slate-300 group-hover:text-indigo-600 transition-colors" />
+                  </div>
                 </td>
               </tr>
             ))}
 
-            {filteredCases.length === 0 && (
+            {displayedCases.length === 0 && (
               <tr>
                 <td colSpan={15} className="px-6 py-20 text-center text-slate-400">
                   <div className="flex flex-col items-center gap-2">
