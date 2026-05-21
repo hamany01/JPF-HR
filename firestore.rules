@@ -81,12 +81,14 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
+      // السماح بتحديث قيم الـ sequences عند إنشاء الطلبات للمدراء والمسؤولين
+      allow update: if isSignedIn() && settingId == 'sequences' && (isCompanyRole() || hasRole(['law_manager']));
     }
 
     // --- Requests Collection ---
     match /requests/{requestId} {
       allow read: if isSignedIn();
-      allow create: if isCompanyRole();
+      allow create: if isCompanyRole() || hasRole(['law_manager']);
       allow update: if hasRole(['admin', 'law_manager']) || (isCompanyRole() && resource.data.status == 'pending');
       allow delete: if isAdmin();
     }
