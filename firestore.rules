@@ -79,7 +79,8 @@ service cloud.firestore {
 
     // --- Settings Collection ---
     match /settings/{settingId} {
-      allow read: if isSignedIn();
+      allow get: if settingId == 'appearance' || isSignedIn();
+      allow list: if isSignedIn();
       allow write: if isAdmin();
       // السماح بتحديث قيم الـ sequences عند إنشاء الطلبات للمدراء والمسؤولين
       allow update: if isSignedIn() && settingId == 'sequences' && (isCompanyRole() || hasRole(['law_manager']));
