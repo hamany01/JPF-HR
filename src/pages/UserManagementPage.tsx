@@ -288,7 +288,23 @@ export default function UserManagementPage() {
 
     } catch (error: any) {
       console.error('❌ Error inside handleResetPassword:', error);
-      toast.error(`فشل إعادة تعيين كلمة المرور: ${error.message || 'يرجى التحقق من الخادم وسجلات Cloud Function.'}`, { id: toastId });
+      
+      const isInternalOrCors = 
+        error?.code === 'internal' || 
+        error?.code === 'functions/internal' ||
+        error?.message?.toLowerCase().includes('internal') || 
+        error?.message?.toLowerCase().includes('cors') || 
+        error?.message?.toLowerCase().includes('fetch') ||
+        error?.message?.toLowerCase().includes('failed to fetch');
+
+      if (isInternalOrCors) {
+        toast.error(
+          `فشل إعادة التعيين (internal / CORS): الدالة Cloud Function غير منشورة أو غير متصلة في مشروع Firebase. يرجى نشرها أولاً باستخدام أمر: \n'firebase deploy --only functions:resetUserPassword'`,
+          { id: toastId, duration: 8000 }
+        );
+      } else {
+        toast.error(`فشل إعادة تعيين كلمة المرور: ${error.message || 'يرجى التحقق من الخادم وسجلات Cloud Function.'}`, { id: toastId });
+      }
     }
   };
 
