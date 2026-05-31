@@ -38,6 +38,12 @@ service cloud.firestore {
       allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
     }
 
+    // --- Roles Permissions Collection ---
+    match /roles_permissions/{roleId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     // --- Cases Collection ---
     match /cases/{caseId} {
       allow read: if isSignedIn();
@@ -45,7 +51,7 @@ service cloud.firestore {
       allow update: if isAnyStaff();
       allow delete: if isAdmin();
 
-      // Subcollections: activities, documents
+      // Subcollections: activities, documents, sessions
       match /activities/{docId} {
         allow read: if isSignedIn();
         allow create: if isAnyStaff();
@@ -54,6 +60,13 @@ service cloud.firestore {
       }
       
       match /documents/{docId} {
+        allow read: if isSignedIn();
+        allow create: if isAnyStaff();
+        allow update: if isAnyStaff();
+        allow delete: if isCompanyRole();
+      }
+
+      match /sessions/{docId} {
         allow read: if isSignedIn();
         allow create: if isAnyStaff();
         allow update: if isAnyStaff();
@@ -90,8 +103,43 @@ service cloud.firestore {
     match /requests/{requestId} {
       allow read: if isSignedIn();
       allow create: if isCompanyRole() || hasRole(['law_manager']);
-      allow update: if hasRole(['admin', 'law_manager']) || (isCompanyRole() && resource.data.status == 'pending');
+      allow update: if hasRole(['admin', 'law_manager', 'company_manager']) || (isCompanyRole() && resource.data.status == 'pending');
       allow delete: if isAdmin();
+
+      // Subcollection: notes
+      match /notes/{noteId} {
+        // القراءة حسب نوع الملاحظة وبند الوصول والسرية
+        allow read: if isSignedIn() && (
+          // الإدارة والمسؤولون يرون كل شيء
+          hasRole(['admin', 'law_manager', 'company_manager', 'company_assistant', 'law_assistant']) ||
+          
+          // ملاحظة عامة للموظفين
+          resource.data.scope == 'employee_public' ||
+          
+          // ملاحظة موجهة للموظف الحالي المسجل
+          (resource.data.scope == 'employee_targeted' && resource.data.targetEmployeeId == request.auth.uid) ||
+          
+          // كاتب الملاحظة نفسه يراها
+          resource.data.createdBy == request.auth.uid
+        );
+        
+        // الإنشاء
+        allow create: if isSignedIn() && (
+          // الإدارة تستطيع إنشاء أي نوع
+          hasRole(['admin', 'law_manager', 'company_manager', 'company_assistant', 'law_assistant']) ||
+          
+          // الموظف يستطيع إنشاء ملاحظات عامة فقط بشرط تعيين هويته كمنشئ
+          (hasRole(['employee']) && 
+           request.resource.data.scope == 'employee_public' &&
+           request.resource.data.createdBy == request.auth.uid)
+        );
+        
+        // التعديل والحذف
+        allow update, delete: if isSignedIn() && (
+          // Admin أو كاتب الملاحظة
+          hasRole(['admin']) || resource.data.createdBy == request.auth.uid
+        );
+      }
     }
 
     // --- Unified App Events Collection ---
@@ -138,6 +186,12 @@ service cloud.firestore {
       allow create: if isSignedIn();
       allow update: if isSignedIn();
       allow delete: if isSignedIn();
+    }
+
+    // --- Audit Logs Collection ---
+    match /audit_logs/{logId} {
+      allow read: if isSignedIn() && isAdmin();
+      allow write: if false; // Only written via Admin SDK / Cloud Functions
     }
   }
 }

@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { doc, setDoc, deleteDoc, serverTimestamp, collection, getDocs, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, serverTimestamp, collection, getDocs, updateDoc, getDoc } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, getAuth } from 'firebase/auth';
 import { initializeApp, getApp, getApps } from 'firebase/app';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { toast } from 'react-hot-toast';
 import { db } from '../firebase/config';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { motion, AnimatePresence } from 'motion/react';
-import { UserCheck, UserX, X, Loader2, Edit, Trash2, AlertTriangle } from 'lucide-react';
+import { UserCheck, UserX, X, Loader2, Edit, Trash2, AlertTriangle, KeyRound } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../hooks/useAuth';
+import PasswordResetModal from '../components/admin/PasswordResetModal';
+import { generateSecurePassword } from '../utils/passwordGenerator';
 
 export default function UserManagementPage() {
   const [users, setUsers] = useState<any[]>([]);
@@ -21,6 +24,15 @@ export default function UserManagementPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [createdUser, setCreatedUser] = useState<{email: string, password: string} | null>(null);
   const { isAdmin } = useAuth();
+
+  // Password Reset State
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetUser, setResetUser] = useState<any | null>(null);
+  const [newGeneratedPassword, setNewGeneratedPassword] = useState('');
+  const [telegramStatus, setTelegramStatus] = useState<{ attempted: boolean; success: boolean; errorMsg?: string }>({
+    attempted: false,
+    success: false,
+  });
 
   // Form State
   const [formData, setFormData] = useState({
@@ -132,6 +144,120 @@ export default function UserManagementPage() {
       fetchUsers();
     } catch (error) {
       toast.error('فشل تحديث الدور');
+    }
+  };
+
+  // إرسال كلمة المرور لتيليجرام
+  const sendPasswordTelegramMessage = async (targetUser: any, passwordValue: string) => {
+    if (!targetUser.telegramChatId) return;
+    
+    try {
+      const settingsSnap = await getDoc(doc(db, 'notificationSettings', 'global'));
+      const settings = settingsSnap.exists() ? settingsSnap.data() : null;
+      const botToken = settings?.telegram?.botToken || import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
+      
+      if (!botToken) {
+        setTelegramStatus({
+          attempted: true,
+          success: false,
+          errorMsg: 'بوت تيليجرام غير مهيأ في إعدادات الإشعارات',
+        });
+        return;
+      }
+      
+      const message = `
+🔐 <b>إعادة تعيين كلمة المرور - JPF HR</b>
+
+مرحباً <b>${targetUser.name}</b>،
+
+تمت إعادة تعيين كلمة المرور الخاصة بك بنجاح في نظام JPF-HR.
+
+📧 <b>البريد الإلكتروني:</b> <code>${targetUser.email}</code>
+🔑 <b>كلمة المرور الجديدة:</b> <code>${passwordValue}</code>
+
+⚠️ يُنصح بشدة بتسجيل الدخول وتغيير كلمة المرور من لوحة التحكم في صفحة "الملف الشخصي" لحماية حسابك العريق.
+
+• <b>تاريخ العملية:</b> ${new Date().toLocaleDateString('ar-SA')} @ ${new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+• <b>الحماية والأمان:</b> JPF-HR 🦾
+      `.trim();
+
+      const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetUser.telegramChatId,
+          text: message,
+          parse_mode: 'HTML',
+        }),
+      });
+
+      if (response.ok) {
+        setTelegramStatus({ attempted: true, success: true });
+        toast.success('تم إرسال إشعار تيليجرام للموظف بنجاح');
+      } else {
+        const errJson = await response.json();
+        setTelegramStatus({
+          attempted: true,
+          success: false,
+          errorMsg: errJson.description || 'فشل إرسال الرسالة إلى خادم تيليجرام',
+        });
+      }
+    } catch (err: any) {
+      console.error('Error sending Telegram:', err);
+      setTelegramStatus({
+        attempted: true,
+        success: false,
+        errorMsg: err.message || 'خطأ في الاتصال بالشبكة',
+      });
+    }
+  };
+
+  // دالة إعادة توليد كلمة المرور للأدمن
+  const handleResetPassword = async (targetUser: any) => {
+    if (!isAdmin) {
+      toast.error('عذراً، صلاحية إعادة تعيين كلمة المرور مخصصة للأدمن فقط');
+      return;
+    }
+
+    const confirmed = window.confirm(`هل أنت متأكد من إعادة توليد كلمة المرور للموظف: ${targetUser.name}؟`);
+    if (!confirmed) return;
+
+    const toastId = toast.loading('جاري توليد كلمة مرور جديدة...');
+    try {
+      const generatedPass = generateSecurePassword();
+      
+      // استدعاء دالة Cloud Function باستخدام SDK مع تمرير اسم الدالة
+      const functionsInstance = getFunctions(getApp());
+      const resetPasswordCallable = httpsCallable<{ userId: string; newPassword: string }, { success: boolean; message?: string }>(
+        functionsInstance,
+        'resetUserPassword'
+      );
+      
+      await resetPasswordCallable({
+        userId: targetUser.id,
+        newPassword: generatedPass
+      });
+
+      // إعداد بيانات المودال والولاية
+      setResetUser(targetUser);
+      setNewGeneratedPassword(generatedPass);
+      setResetModalOpen(true);
+      
+      toast.success('تم إعادة توليد كلمة المرور بنجاح وتسجيل العملية', { id: toastId });
+
+      // إرسال عبر Telegram إذا كان مسجلاً
+      if (targetUser.telegramChatId) {
+        setTelegramStatus({ attempted: true, success: false, errorMsg: 'جاري الإرسال...' });
+        await sendPasswordTelegramMessage(targetUser, generatedPass);
+      } else {
+        setTelegramStatus({ attempted: false, success: false });
+      }
+
+    } catch (error: any) {
+      console.error('Password reset failed:', error);
+      
+      // رسالة توجيهية سهلة الفهم للعميل في حال دالة Cloud Function لم تُنشر بعد
+      toast.error(`فشل إعادة التعيين: يرجى التأكد من نشر وظيفة Cloud Function أولاً. (${error.message || error.code})`, { id: toastId });
     }
   };
 
@@ -271,6 +397,7 @@ export default function UserManagementPage() {
                     <option value="company_assistant">مساعد الشركة</option>
                     <option value="law_manager">مدير المكتب القانوني</option>
                     <option value="law_assistant">مساعد قانوني</option>
+                    <option value="employee">موظف</option>
                   </select>
                 </td>
                 <td className="px-6 py-4">
@@ -297,6 +424,14 @@ export default function UserManagementPage() {
                       className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all disabled:opacity-50"
                     >
                       <Edit size={16} />
+                    </button>
+                    <button 
+                      onClick={() => handleResetPassword(user)}
+                      disabled={!isAdmin}
+                      title="إعادة توليد كلمة المرور"
+                      className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all disabled:opacity-50"
+                    >
+                      <KeyRound size={16} />
                     </button>
                     <button 
                       onClick={() => toggleStatus(user)}
@@ -350,7 +485,7 @@ export default function UserManagementPage() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden shadow-indigo-200/50"
+              className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl shadow-indigo-200/50 max-h-[90vh] overflow-y-auto"
             >
               <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between">
                 <h3 className="text-xl font-bold text-slate-900">
@@ -491,6 +626,7 @@ export default function UserManagementPage() {
                         <option value="company_assistant">مساعد الشركة</option>
                         <option value="law_manager">مدير المكتب القانوني</option>
                         <option value="law_assistant">مساعد قانوني</option>
+                        <option value="employee">موظف</option>
                       </select>
                     </div>
 
@@ -559,7 +695,7 @@ export default function UserManagementPage() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl p-8 text-center"
+              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl p-8 text-center max-h-[90vh] overflow-y-auto"
             >
               <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
                 <AlertTriangle size={32} />
@@ -589,6 +725,27 @@ export default function UserManagementPage() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Password Reset Success Modal */}
+      <AnimatePresence>
+        {resetModalOpen && resetUser && (
+          <PasswordResetModal
+            user={resetUser}
+            newPassword={newGeneratedPassword}
+            telegramStatus={telegramStatus}
+            onSendTelegramRetry={async () => {
+              if (resetUser && newGeneratedPassword) {
+                await sendPasswordTelegramMessage(resetUser, newGeneratedPassword);
+              }
+            }}
+            onClose={() => {
+              setResetModalOpen(false);
+              setResetUser(null);
+              setNewGeneratedPassword('');
+            }}
+          />
         )}
       </AnimatePresence>
     </div>

@@ -6,10 +6,13 @@ import {
   Settings, 
   LogOut, 
   FileText, 
-  Bell 
+  Bell,
+  Shield,
+  Info
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import JpfLogo from './JpfLogo';
+import { APP_VERSION } from '../../config/version';
 
 interface SidebarProps {
   isSidebarCollapsed: boolean;
@@ -32,7 +35,9 @@ export default function Sidebar({
     { icon: FileText, label: 'Cases', path: '/cases' },
     { icon: Settings, label: 'Execution Settings', path: '/settings/execution', adminOnly: true },
     { icon: Bell, label: 'Notification Settings', path: '/settings/notifications', adminOnly: true },
+    { icon: Shield, label: 'Permissions Settings', path: '/admin/permissions', adminOnly: true },
     { icon: Users, label: 'Employees', path: '/users', adminOnly: true },
+    { icon: Info, label: 'About', path: '/about', adminOnly: true },
     { icon: Settings, label: 'Profile', path: '/profile' },
   ];
 
@@ -43,7 +48,9 @@ export default function Sidebar({
       'Cases': 'إدارة القضايا',
       'Execution Settings': 'إعدادات التنفيذ',
       'Notification Settings': 'إعدادات الإشعارات',
-      'Employees': 'إدارة الموظيفين',
+      'Permissions Settings': 'صلاحيات الأدوار',
+      'Employees': 'إدارة الموظفين',
+      'About': 'حول النظام',
       'Profile': 'الملف الشخصي'
     }[label] || label;
   };
@@ -61,7 +68,7 @@ export default function Sidebar({
             <div className="text-center mt-1 animate-fadeIn">
               <h1 className="text-sm font-black text-white tracking-wide bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">نظام الشؤون القانونية</h1>
               <span className="text-[10px] font-bold text-slate-400 block mt-1 leading-relaxed">شركة مصنع جدة للدهانات و المعاجيين</span>
-              <span className="text-[10px] font-bold text-slate-500 bg-slate-800/60 px-2 py-0.5 rounded-full mt-2 inline-block">الإصدار 1.0</span>
+              <span className="text-[10px] font-bold text-slate-500 bg-slate-800/60 px-2 py-0.5 rounded-full mt-2 inline-block">الإصدار v{APP_VERSION.full}</span>
             </div>
           )}
         </div>
@@ -71,7 +78,10 @@ export default function Sidebar({
       <nav className="flex-1 p-4 space-y-1.5 overflow-y-auto">
         {menuItems.map((item) => {
           if (item.adminOnly && !isAdmin) return null;
-          const isActive = location.pathname === item.path || (item.path === '/cases' && location.pathname.startsWith('/cases'));
+          const isActive = 
+            location.pathname === item.path || 
+            (item.path === '/' && location.pathname === '/dashboard') || 
+            (item.path === '/cases' && location.pathname.startsWith('/cases'));
           const labelText = translatedLabel(item.label);
 
           return (
@@ -108,6 +118,12 @@ export default function Sidebar({
             <p className="text-[10px] text-slate-500 font-mono truncate">{profileEmail}</p>
           </div>
         )}
+        
+        {/* نظام ترقيم الإصدارات في أسفل Sidebar */}
+        <div className="text-[10px] text-slate-500 text-center select-none font-mono font-bold pt-1 border-t border-slate-800/40">
+          <span className="hover:text-indigo-400 transition-colors">JPF-HR v{APP_VERSION.full}</span>
+          {!isSidebarCollapsed && <span className="block text-[9px] opacity-75 mt-0.5">{APP_VERSION.lastUpdated}</span>}
+        </div>
         
         <button
           onClick={handleLogout}

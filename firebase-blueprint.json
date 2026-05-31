@@ -8,19 +8,41 @@
         "name": { "type": "string", "description": "Full name of the user" },
         "email": { "type": "string", "format": "email", "description": "User email" },
         "phone": { "type": "string", "description": "Phone number" },
-        "role": { "type": "string", "enum": ["admin", "hr", "manager", "employee"], "description": "User access role" },
+        "role": { "type": "string", "enum": ["admin", "company_manager", "company_assistant", "law_manager", "law_assistant", "employee"], "description": "User access role" },
         "isActive": { "type": "boolean", "description": "Whether the user is active in the system" },
         "telegramChatId": { "type": "string", "description": "Telegram chat ID for notifications" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
       },
       "required": ["name", "email", "role", "isActive", "createdAt", "updatedAt"]
+    },
+    "RolePermissions": {
+      "title": "RolePermissions",
+      "description": "Dynamic control settings for field visibilities and permissible client-side actions per role",
+      "type": "object",
+      "properties": {
+        "label": { "type": "string", "description": "Arabic label display for the role" },
+        "fields": {
+          "type": "object",
+          "description": "Visibility levels for target fields"
+        },
+        "actions": {
+          "type": "object",
+          "description": "Permissible actions values"
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["label", "fields", "actions"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "Individual user profiles"
+    },
+    "/roles_permissions/{roleId}": {
+      "schema": "RolePermissions",
+      "description": "Rule structures and settings for each role"
     }
   }
 }

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Mail, Phone, ExternalLink } from 'lucide-react';
+import { APP_VERSION } from '../../config/version';
 
 export default function Footer() {
   const currentYear = 2026;
@@ -16,9 +17,16 @@ export default function Footer() {
               عبدالرحمن سالم باشنيني
             </span>
           </p>
-          <p className="text-xs text-slate-400 font-medium select-none">
-            © {currentYear} جميع الحقوق محفوظة - نظام الشؤون القانونية
-          </p>
+          <div className="flex flex-wrap items-center justify-center md:justify-start gap-2.5 text-xs text-slate-400 font-medium select-none">
+            <span>© {currentYear} جميع الحقوق محفوظة - نظام الشؤون القانونية</span>
+            <span className="text-slate-300">|</span>
+            <span className="text-[10px] bg-indigo-50 text-indigo-600 font-bold px-2 py-0.5 rounded-md font-mono" title={APP_VERSION.name}>
+              v{APP_VERSION.full}
+            </span>
+            <span className="text-[10px] text-slate-400">
+              آخر تحديث: {new Date(APP_VERSION.lastUpdated).toLocaleDateString('ar-SA')}
+            </span>
+          </div>
         </div>
 
         {/* معلومات الاتصال المباشر */}

@@ -15,6 +15,7 @@ import {
 import { db } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useEmployees } from '../hooks/useEmployees';
 import { motion, AnimatePresence } from 'motion/react';
 import { createRequestEvent, createCaseEvent } from '../services/eventService';
 import { buildWhatsAppLink, getEventWhatsAppMessage } from '../services/notificationsChannels';
@@ -141,6 +142,8 @@ export default function RequestsListPage() {
   const canReviewRequest = ['admin', 'law_manager'].includes(profile?.role || '');
   const canReactivate = ['admin', 'law_manager', 'company_manager'].includes(profile?.role || '');
   
+  const { employees, loading: loadingEmployees } = useEmployees();
+  
   const [allUsers, setAllUsers] = useState<Record<string, string>>({});
   const [telegramUsers, setTelegramUsers] = useState<any[]>([]);
   const [showNotificationOptions, setShowNotificationOptions] = useState(false);
@@ -162,7 +165,9 @@ export default function RequestsListPage() {
     promissoryNoteAmount: '',
     transactionType: '',
     platform: '',
-    attachments: [{ type: '', url: '', customLabel: '' }] as Attachment[]
+    attachments: [{ type: '', url: '', customLabel: '' }] as Attachment[],
+    assignedEmployeeId: '',
+    assignedEmployeeName: ''
   });
 
   const attachmentTypes = [
@@ -307,6 +312,8 @@ export default function RequestsListPage() {
           statusLabel: 'قيد المراجعة',
           createdBy: user?.uid,
           createdAt: serverTimestamp(),
+          assignedEmployeeId: formData.assignedEmployeeId || '',
+          assignedEmployeeName: formData.assignedEmployeeName || ''
         };
 
         const requestRef = doc(collection(db, 'requests'));
@@ -383,7 +390,9 @@ export default function RequestsListPage() {
         promissoryNoteAmount: '',
         transactionType: '',
         platform: '',
-        attachments: [{ type: '', url: '', customLabel: '' }]
+        attachments: [{ type: '', url: '', customLabel: '' }],
+        assignedEmployeeId: '',
+        assignedEmployeeName: ''
       });
       fetchRequests();
     } catch (error) {
@@ -931,7 +940,7 @@ export default function RequestsListPage() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden"
+              className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl max-h-[90vh] overflow-y-auto"
               dir="rtl"
             >
               <div className="p-8 border-b border-slate-100">
@@ -1114,6 +1123,44 @@ export default function RequestsListPage() {
                         placeholder="05xxxxxxxx"
                       />
                     </div>
+                  </div>
+
+                  {/* Assigned Employee Section */}
+                  <div className="md:col-span-2 pt-4">
+                    <h3 className="text-xs font-black text-indigo-600 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                      <div className="h-px flex-1 bg-indigo-100" />
+                      <span>تكليف وتعيين الموظف المسؤول</span>
+                      <div className="h-px flex-1 bg-indigo-100" />
+                    </h3>
+                  </div>
+
+                  <div className="md:col-span-2 space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">الموظف المكلف بالمتابعة والمعالجة</label>
+                    {loadingEmployees ? (
+                      <div className="text-xs text-slate-400 animate-pulse py-2">جاري تحميل قائمة الموظفين...</div>
+                    ) : (
+                      <select 
+                        value={formData.assignedEmployeeId}
+                        onChange={(e) => {
+                          const empId = e.target.value;
+                          const selectedEmp = employees.find(emp => emp.uid === empId);
+                          setFormData({
+                            ...formData,
+                            assignedEmployeeId: empId,
+                            assignedEmployeeName: selectedEmp ? selectedEmp.name : ''
+                          });
+                        }}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-705 text-slate-900 dark:text-white"
+                      >
+                        <option value="" className="text-slate-500">-- اختياري: غير مسند حالياً --</option>
+                        {employees.map((emp) => (
+                          <option key={emp.uid} value={emp.uid} className="text-slate-900">
+                            👤 {emp.name} | عبء التكليفات: ({emp.activeRequestsCount}) طلبات نشطة
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <span className="text-[10px] text-slate-450 dark:text-slate-500 leading-tight block">يساعد إسناد الموظف عند إنشاء الطلب على المتابعة الفورية والتكامل التلقائي مع لوحات التكليفات.</span>
                   </div>
 
                   {/* Attachments Section */}
@@ -1744,7 +1791,7 @@ export default function RequestsListPage() {
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl p-8"
+              className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl p-8 max-h-[90vh] overflow-y-auto"
               dir="rtl"
             >
               <div className="flex items-center gap-4 mb-6">
@@ -1801,7 +1848,7 @@ export default function RequestsListPage() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl p-8"
+              className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl p-8 max-h-[90vh] overflow-y-auto"
               dir="rtl"
             >
               <div className="flex items-center gap-4 mb-6">
@@ -1959,7 +2006,7 @@ export default function RequestsListPage() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl p-8"
+              className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl p-8 max-h-[90vh] overflow-y-auto"
               dir="rtl"
             >
               <div className="flex items-center gap-4 mb-6">
