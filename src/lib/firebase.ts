@@ -9,4 +9,4 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
-export const functions = getFunctions(app);
+export const functions = getFunctions(app, 'us-central1');
