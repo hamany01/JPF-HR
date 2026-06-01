@@ -5,16 +5,41 @@
       "description": "User profile information for JPF-HR",
       "type": "object",
       "properties": {
-        "name": { "type": "string", "description": "Full name of the user" },
+        "fullName": { "type": "string", "description": "Full name of the user" },
         "email": { "type": "string", "format": "email", "description": "User email" },
         "phone": { "type": "string", "description": "Phone number" },
-        "role": { "type": "string", "enum": ["admin", "company_manager", "company_assistant", "law_manager", "law_assistant", "employee"], "description": "User access role" },
+        "role": { "type": "string", "enum": ["admin", "company_manager", "assistant_manager", "sales_employee", "law_firm_manager", "law_firm_assistant"], "description": "User access role" },
+        "lawFirmId": { "type": "string", "description": "Law firm link for law_firm_manager and law_firm_assistant" },
+        "assignedCaseIds": { "type": "array", "description": "Cases assigned to sales_employee or law_firm_assistant" },
         "isActive": { "type": "boolean", "description": "Whether the user is active in the system" },
         "telegramChatId": { "type": "string", "description": "Telegram chat ID for notifications" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
       },
-      "required": ["name", "email", "role", "isActive", "createdAt", "updatedAt"]
+      "required": ["fullName", "email", "role", "isActive", "createdAt", "updatedAt"]
+    },
+    "Case": {
+      "title": "Case",
+      "description": "Legal case data model",
+      "type": "object",
+      "properties": {
+        "caseId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientId": { "type": "string", "description": "National/commercial registration ID" },
+        "amountClaimed": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "under_review", "internal", "external_assigned", "in_court", "closed", "archived"] },
+        "assignmentType": { "type": "string", "enum": ["internal", "external"] },
+        "lawFirmId": { "type": "string" },
+        "assignedAssistantId": { "type": "string" },
+        "salesEmployeeId": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "format": "date-time" },
+        "deletedBy": { "type": "string" }
+      },
+      "required": ["clientName", "amountClaimed", "status", "assignmentType", "createdBy", "createdAt", "updatedAt"]
     },
     "RolePermissions": {
       "title": "RolePermissions",
@@ -33,12 +58,39 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["label", "fields", "actions"]
+    },
+    "PaymentPlan": {
+      "title": "PaymentPlan",
+      "description": "Dynamic recurring installment details for manual payment plans",
+      "type": "object",
+      "properties": {
+        "planId": { "type": "string" },
+        "caseId": { "type": "string" },
+        "installmentAmount": { "type": "number" },
+        "dueDate": { "type": "string", "description": "YYYY-MM-DD format" },
+        "status": { "type": "string", "enum": ["planned", "paid", "partially_paid", "on_hold"] },
+        "paidAmount": { "type": "number" },
+        "paidAt": { "type": "string", "format": "date-time", "nullable": true },
+        "notes": { "type": "string" },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "format": "date-time", "nullable": true },
+        "deletedBy": { "type": "string", "nullable": true }
+      },
+      "required": ["caseId", "installmentAmount", "dueDate", "status", "isDeleted"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "Individual user profiles"
+    },
+    "/cases/{caseId}": {
+      "schema": "Case",
+      "description": "Legal cases registry"
+    },
+    "/payment_plans/{planId}": {
+      "schema": "PaymentPlan",
+      "description": "Payment installment plans list"
     },
     "/roles_permissions/{roleId}": {
       "schema": "RolePermissions",

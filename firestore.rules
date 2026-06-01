@@ -22,11 +22,11 @@ service cloud.firestore {
     }
 
     function isCompanyRole() {
-      return hasRole(['admin', 'company_manager', 'company_assistant']);
+      return hasRole(['admin', 'company_manager', 'assistant_manager']);
     }
     
     function isAnyStaff() {
-      return hasRole(['admin', 'company_manager', 'company_assistant', 'law_manager', 'law_assistant', 'employee']);
+      return hasRole(['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant', 'sales_employee']);
     }
 
     // --- Users Collection ---
@@ -35,7 +35,8 @@ service cloud.firestore {
       allow list: if isSignedIn(); 
       
       allow create: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
-      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      // To prevent privilege escalation, don't allow setting role unless admin
+      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId && (request.resource.data.role == resource.data.role || !('role' in resource.data)));
     }
 
     // --- Roles Permissions Collection ---
@@ -46,48 +47,92 @@ service cloud.firestore {
 
     // --- Cases Collection ---
     match /cases/{caseId} {
-      allow read: if isSignedIn();
-      allow create: if isCompanyRole() || hasRole(['law_manager']);
-      allow update: if isAnyStaff();
-      allow delete: if isAdmin();
+      allow get: if isSignedIn() && (
+        isAdmin() ||
+        hasRole(['company_manager', 'assistant_manager']) ||
+        (hasRole(['sales_employee']) && resource.data.salesEmployeeId == request.auth.uid) ||
+        (hasRole(['law_firm_manager']) && resource.data.lawFirmId != null && resource.data.lawFirmId == getUserData().lawFirmId) ||
+        (hasRole(['law_firm_assistant']) && resource.data.assignedAssistantId == request.auth.uid)
+      ) && (
+        isAdmin() || resource.data.isDeleted != true
+      );
 
-      // Subcollections: activities, documents, sessions
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        hasRole(['company_manager', 'assistant_manager']) ||
+        (hasRole(['sales_employee']) && resource.data.salesEmployeeId == request.auth.uid) ||
+        (hasRole(['law_firm_manager']) && resource.data.lawFirmId != null && resource.data.lawFirmId == getUserData().lawFirmId) ||
+        (hasRole(['law_firm_assistant']) && resource.data.assignedAssistantId == request.auth.uid)
+      ) && (
+        isAdmin() || resource.data.isDeleted != true
+      );
+
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        hasRole(['company_manager', 'assistant_manager'])
+      ) && (!('isDeleted' in request.resource.data) || request.resource.data.isDeleted != true);
+
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        hasRole(['company_manager', 'assistant_manager']) ||
+        (hasRole(['law_firm_manager']) && resource.data.lawFirmId != null && resource.data.lawFirmId == getUserData().lawFirmId) ||
+        (hasRole(['law_firm_assistant']) && resource.data.assignedAssistantId == request.auth.uid)
+      ) && (
+        isAdmin() || resource.data.isDeleted != true
+      );
+
+      allow delete: if isSignedIn() && isAdmin();
+
+      // Subcollections
       match /activities/{docId} {
         allow read: if isSignedIn();
-        allow create: if isAnyStaff();
-        allow update: if isAnyStaff();
+        allow create, update: if isAnyStaff();
         allow delete: if isCompanyRole();
       }
       
       match /documents/{docId} {
         allow read: if isSignedIn();
-        allow create: if isAnyStaff();
-        allow update: if isAnyStaff();
+        allow create, update: if isAnyStaff();
         allow delete: if isCompanyRole();
       }
 
       match /sessions/{docId} {
         allow read: if isSignedIn();
-        allow create: if isAnyStaff();
-        allow update: if isAnyStaff();
+        allow create, update: if isAnyStaff();
         allow delete: if isCompanyRole();
       }
 
-      // New Payments subcollection
       match /payments/{docId} {
         allow read: if isSignedIn();
-        allow create: if hasRole(['admin', 'company_manager', 'law_manager']);
-        allow update: if hasRole(['admin', 'company_manager', 'law_manager']);
-        allow delete: if hasRole(['admin', 'company_manager', 'law_manager']);
+        allow create, update, delete: if isAdmin() || hasRole(['company_manager', 'assistant_manager']);
       }
+    }
 
-      // Legacy finance subcollection
-      match /finance/{docId} {
-        allow read: if isSignedIn();
-        allow create: if isAnyStaff();
-        allow update: if isAnyStaff();
-        allow delete: if isCompanyRole();
-      }
+    // --- Payment Plans Collection ---
+    match /payment_plans/{planId} {
+      allow get: if isSignedIn() && (
+        isAdmin() ||
+        hasRole(['company_manager', 'assistant_manager']) ||
+        hasRole(['sales_employee', 'law_firm_manager', 'law_firm_assistant'])
+      ) && (isAdmin() || resource.data.isDeleted != true);
+
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        hasRole(['company_manager', 'assistant_manager']) ||
+        hasRole(['sales_employee', 'law_firm_manager', 'law_firm_assistant'])
+      ) && (isAdmin() || resource.data.isDeleted != true);
+
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        hasRole(['company_manager', 'assistant_manager'])
+      );
+
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        hasRole(['company_manager', 'assistant_manager'])
+      );
+
+      allow delete: if isSignedIn() && isAdmin();
     }
 
     // --- Settings Collection ---
@@ -95,48 +140,32 @@ service cloud.firestore {
       allow get: if settingId == 'appearance' || isSignedIn();
       allow list: if isSignedIn();
       allow write: if isAdmin();
-      // السماح بتحديث قيم الـ sequences عند إنشاء الطلبات للمدراء والمسؤولين
-      allow update: if isSignedIn() && settingId == 'sequences' && (isCompanyRole() || hasRole(['law_manager']));
+      allow update: if isSignedIn() && settingId == 'sequences' && (isCompanyRole() || hasRole(['law_firm_manager']));
     }
 
     // --- Requests Collection ---
     match /requests/{requestId} {
       allow read: if isSignedIn();
-      allow create: if isCompanyRole() || hasRole(['law_manager']);
-      allow update: if hasRole(['admin', 'law_manager', 'company_manager']) || (isCompanyRole() && resource.data.status == 'pending');
+      allow create: if isCompanyRole() || hasRole(['law_firm_manager']);
+      allow update: if hasRole(['admin', 'law_firm_manager', 'company_manager']) || (isCompanyRole() && resource.data.status == 'pending');
       allow delete: if isAdmin();
 
-      // Subcollection: notes
       match /notes/{noteId} {
-        // القراءة حسب نوع الملاحظة وبند الوصول والسرية
         allow read: if isSignedIn() && (
-          // الإدارة والمسؤولون يرون كل شيء
-          hasRole(['admin', 'law_manager', 'company_manager', 'company_assistant', 'law_assistant']) ||
-          
-          // ملاحظة عامة للموظفين
+          hasRole(['admin', 'law_firm_manager', 'company_manager', 'assistant_manager', 'law_firm_assistant']) ||
           resource.data.scope == 'employee_public' ||
-          
-          // ملاحظة موجهة للموظف الحالي المسجل
           (resource.data.scope == 'employee_targeted' && resource.data.targetEmployeeId == request.auth.uid) ||
-          
-          // كاتب الملاحظة نفسه يراها
           resource.data.createdBy == request.auth.uid
         );
         
-        // الإنشاء
         allow create: if isSignedIn() && (
-          // الإدارة تستطيع إنشاء أي نوع
-          hasRole(['admin', 'law_manager', 'company_manager', 'company_assistant', 'law_assistant']) ||
-          
-          // الموظف يستطيع إنشاء ملاحظات عامة فقط بشرط تعيين هويته كمنشئ
-          (hasRole(['employee']) && 
+          hasRole(['admin', 'law_firm_manager', 'company_manager', 'assistant_manager', 'law_firm_assistant']) ||
+          (hasRole(['sales_employee']) && 
            request.resource.data.scope == 'employee_public' &&
            request.resource.data.createdBy == request.auth.uid)
         );
         
-        // التعديل والحذف
         allow update, delete: if isSignedIn() && (
-          // Admin أو كاتب الملاحظة
           hasRole(['admin']) || resource.data.createdBy == request.auth.uid
         );
       }
@@ -144,54 +173,45 @@ service cloud.firestore {
 
     // --- Unified App Events Collection ---
     match /appEvents/{eventId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
+      allow read, create, update: if isSignedIn();
     }
 
     // --- Notification System ---
     match /notificationSettings/{document=**} {
-      allow read: if isSignedIn() && isAdmin();
-      allow write: if isSignedIn() && isAdmin();
+      allow read, write: if isSignedIn() && isAdmin();
     }
 
     match /notificationRules/{ruleId} {
-      allow read: if isSignedIn() && isAdmin();
-      allow write: if isSignedIn() && isAdmin();
+      allow read, write: if isSignedIn() && isAdmin();
     }
 
     match /notificationLogs/{logId} {
       allow read: if isSignedIn() && isAdmin();
-      allow create: if isSignedIn(); // Allow writing from client services
+      allow create: if isSignedIn(); 
     }
 
     // --- Legacy Request Events Collection ---
     match /requestEvents/{eventId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
+      allow read, create, update: if isSignedIn();
     }
 
     // --- Case Sessions Collection (for Reminders) ---
     match /case_sessions/{sessionId} {
       allow read: if isSignedIn();
       allow create: if isAnyStaff();
-      allow update: if isSignedIn(); // Allow update for notification flags
+      allow update: if isSignedIn(); 
       allow delete: if isCompanyRole();
     }
 
     // --- Notifications Collection ---
     match /notifications/{notificationId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
-      allow delete: if isSignedIn();
+      allow read, create, update, delete: if isSignedIn();
     }
 
     // --- Audit Logs Collection ---
     match /audit_logs/{logId} {
       allow read: if isSignedIn() && isAdmin();
-      allow write: if false; // Only written via Admin SDK / Cloud Functions
+      allow write: if false; 
     }
   }
 }

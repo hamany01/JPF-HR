@@ -17,6 +17,8 @@ import PermissionsPanel from './pages/admin/PermissionsPanel';
 
 import RequestsListPage from './pages/RequestsListPage';
 import AboutPage from './pages/AboutPage';
+import NotAuthorizedPage from './pages/NotAuthorizedPage';
+import RecycleBinPage from './pages/RecycleBinPage';
 
 export default function App() {
   return (
@@ -39,24 +41,42 @@ export default function App() {
         />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/not-authorized" element={<NotAuthorizedPage />} />
           
+          {/* Universal Protected Routes */}
           <Route element={<ProtectedRoute />}>
             <Route element={<MainLayout />}>
               <Route path="/" element={<DashboardShell />} />
               <Route path="/dashboard" element={<DashboardShell />} />
               <Route path="/requests" element={<RequestsListPage />} />
               <Route path="/employee/requests/:id" element={<RequestDetailsEmployee />} />
-              <Route path="/cases" element={<CasesListPage />} />
-              <Route path="/cases/:caseId" element={<CaseDetailsPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/about" element={<AboutPage />} />
-              
-              <Route element={<AdminRoute />}>
-                <Route path="/users" element={<UserManagementPage />} />
-                <Route path="/settings/execution" element={<ExecutionSettingsHomePage />} />
-                <Route path="/settings/notifications" element={<NotificationSettingsPage />} />
-                <Route path="/admin/permissions" element={<PermissionsPanel />} />
-              </Route>
+            </Route>
+          </Route>
+
+          {/* Cases & Legal Management Protected Routes with Specific Roles */}
+          <Route element={<ProtectedRoute allowedRoles={['admin', 'company_manager', 'assistant_manager', 'sales_employee', 'law_firm_manager', 'law_firm_assistant']} />}>
+            <Route element={<MainLayout />}>
+              <Route path="/cases" element={<CasesListPage />} />
+              <Route path="/cases/:caseId" element={<CaseDetailsPage />} />
+            </Route>
+          </Route>
+
+          {/* Recycle Bin accessible by managers */}
+          <Route element={<ProtectedRoute allowedRoles={['admin', 'company_manager', 'assistant_manager']} />}>
+            <Route element={<MainLayout />}>
+              <Route path="/recycle-bin" element={<RecycleBinPage />} />
+            </Route>
+          </Route>
+
+          {/* Admin Restricted Routes */}
+          <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+            <Route element={<MainLayout />}>
+              <Route path="/users" element={<UserManagementPage />} />
+              <Route path="/settings/execution" element={<ExecutionSettingsHomePage />} />
+              <Route path="/settings/notifications" element={<NotificationSettingsPage />} />
+              <Route path="/admin/permissions" element={<PermissionsPanel />} />
             </Route>
           </Route>
 

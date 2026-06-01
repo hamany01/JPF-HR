@@ -248,17 +248,33 @@ export default function UserManagementPage() {
       const newPassword = generateSecurePassword();
       console.log('✅ Password generated successfully');
 
-      console.log('☁️ Calling Cloud Function resetUserPassword...');
-      const resetPasswordCallable = httpsCallable<{ userId: string; newPassword: string }, { success: boolean; message?: string }>(
-        functions,
-        'resetUserPassword'
-      );
+      console.log('☁️ Calling local API resetUserPassword...');
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        throw new Error('يجب تسجيل الدخول أولاً');
+      }
       
-      const result = await resetPasswordCallable({
-        userId: user.id || user.uid,
-        newPassword: newPassword
+      const idToken = await currentUser.getIdToken();
+      
+      const response = await fetch('/api/resetUserPassword', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          userId: user.id || user.uid,
+          newPassword: newPassword
+        })
       });
-      console.log('✅ Cloud Function result:', result.data);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'فشل في إعادة تعيين كلمة المرور');
+      }
+
+      const result = await response.json();
+      console.log('✅ Local API result:', result);
 
       let telegramSuccess = false;
       let telegramError = '';

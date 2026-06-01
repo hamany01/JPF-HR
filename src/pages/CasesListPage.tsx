@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, runTransaction, doc, getDoc, Timestamp, where, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { db, auth } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -69,29 +69,46 @@ export default function CasesListPage() {
   ]);
 
   // Check if user has permission to add cases
-  const canAddCase = ['admin', 'company_manager', 'company_assistant'].includes(profile?.role || '');
+  const canAddCase = ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '');
 
   const fetchCases = async () => {
     setLoading(true);
     try {
-      let q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        console.warn("No auth token available yet.");
+        setLoading(false);
+        return;
+      }
+      
+      const response = await fetch('/api/cases', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const result = await response.json();
+      
+      if (result.success && Array.isArray(result.data)) {
+        let docs = result.data;
 
-      if (filters.nationality !== 'الكل') {
-        q = query(q, where('nationality', '==', filters.nationality));
-      }
-      if (filters.status !== 'الكل') {
-        q = query(q, where('status', '==', filters.status));
-      }
-      if (filters.platform !== 'الكل') {
-        q = query(q, where('platform', '==', filters.platform));
-      }
-      if (filters.idType !== 'الكل') {
-        q = query(q, where('idType', '==', filters.idType));
-      }
+        // Apply client-side filtering safely over search and options
+        if (filters.nationality !== 'الكل') {
+          docs = docs.filter((d: any) => d.nationality === filters.nationality);
+        }
+        if (filters.status !== 'الكل') {
+          docs = docs.filter((d: any) => d.status === filters.status);
+        }
+        if (filters.platform !== 'الكل') {
+          docs = docs.filter((d: any) => d.platform === filters.platform);
+        }
+        if (filters.idType !== 'الكل') {
+          docs = docs.filter((d: any) => d.idType === filters.idType);
+        }
 
-      const querySnapshot = await getDocs(q);
-      const docs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setCases(docs);
+        setCases(docs);
+      } else {
+        console.error("Failed to load cases from proxy API:", result.message);
+      }
     } catch (error) {
       console.error("Error fetching cases:", error);
     }
@@ -256,6 +273,41 @@ export default function CasesListPage() {
     return (
       <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-bold border", colorStyles[color] || colorStyles.blue)}>
         {label || "قيد التنفيذ"}
+      </span>
+    );
+  };
+
+  const getLifecycleStatusBadge = (status: string) => {
+    const statusMappings: { [key: string]: { label: string; bg: string; text: string; border: string } } = {
+      draft: { label: 'مسودة', bg: 'bg-slate-50', text: 'text-slate-600', border: 'border-slate-200' },
+      under_review: { label: 'تحت المراجعة', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+      internal: { label: 'متابعة داخلية', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+      external_assigned: { label: 'إسناد خارجي', bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200' },
+      in_court: { label: 'بالمحكمة', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
+      closed: { label: 'مغلقة', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
+    };
+
+    const val = statusMappings[status] || { label: 'مسودة', bg: 'bg-slate-50', text: 'text-slate-600', border: 'border-slate-200' };
+
+    return (
+      <span className={cn("inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg border", val.bg, val.text, val.border)}>
+        <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+        {val.label}
+      </span>
+    );
+  };
+
+  const getAssignmentTypeBadge = (type: string) => {
+    if (type === 'external') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-black rounded-lg bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200">
+          خارجي
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-black rounded-lg bg-cyan-50 text-cyan-700 border border-cyan-200">
+        داخلي
       </span>
     );
   };
@@ -507,11 +559,13 @@ export default function CasesListPage() {
           <thead className="bg-slate-50/50 text-slate-500 uppercase tracking-tight text-xs font-medium border-b border-slate-100">
             <tr>
               <th className="px-5 py-5 text-right">رقم الطلب المرجعي</th>
+              <th className="px-5 py-5 text-right">مرحلة القضية</th>
+              <th className="px-5 py-5 text-right">نوع الإسناد</th>
               <th className="px-5 py-5 text-right">وضع القرار</th>
               <th className="px-5 py-5 text-right">نوع الطلب</th>
               <th className="px-5 py-5 text-right">المنفذ ضده</th>
               <th className="px-5 py-5 text-right">تاريخ الرفع</th>
-              <th className="px-5 py-5 text-right">الحالة</th>
+              <th className="px-5 py-5 text-right">الحالة الإجرائية</th>
               <th className="px-5 py-5 text-right">المطالبة</th>
               <th className="px-5 py-5 text-right">المستلم</th>
               <th className="px-5 py-5 text-right">المتبقي</th>
@@ -541,6 +595,12 @@ export default function CasesListPage() {
                       {item.najizClaimNumber && <span className="text-[10px] text-slate-400 font-mono">ناجز: {item.najizClaimNumber}</span>}
                     </div>
                   </div>
+                </td>
+                <td className="px-5 py-5 font-bold">
+                  {getLifecycleStatusBadge(item.status)}
+                </td>
+                <td className="px-5 py-5 font-bold">
+                  {getAssignmentTypeBadge(item.assignmentType || 'internal')}
                 </td>
                 <td className="px-5 py-5">
                   <span className={cn(

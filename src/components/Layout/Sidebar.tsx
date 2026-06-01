@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -13,6 +13,9 @@ import {
 import { cn } from '../../lib/utils';
 import JpfLogo from './JpfLogo';
 import { APP_VERSION } from '../../config/version';
+import { collection, query, onSnapshot } from 'firebase/firestore';
+import { db } from '../../firebase/config';
+import { useAuth } from '../../hooks/useAuth';
 
 interface SidebarProps {
   isSidebarCollapsed: boolean;
@@ -28,6 +31,75 @@ export default function Sidebar({
   handleLogout 
 }: SidebarProps) {
   const location = useLocation();
+  const { user } = useAuth();
+
+  const [pendingRequestsCount, setPendingRequestsCount] = useState<number>(0);
+  const [activeCasesCount, setActiveCasesCount] = useState<number>(0);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    // 1. Listen to requests: count pending requests
+    const qRequests = query(collection(db, 'requests'));
+    const unsubscribeRequests = onSnapshot(qRequests, (snapshot) => {
+      const docs = snapshot.docs.map(doc => doc.data());
+      const pending = docs.filter((item: any) => {
+        const isPending = item.status === 'pending';
+        if (!isPending) return false;
+        if (isAdmin) return true;
+        return item.assignedEmployeeId === user.uid;
+      });
+      setPendingRequestsCount(pending.length);
+    }, (error) => {
+      console.error("Error listening to requests for sidebar badges:", error);
+    });
+
+    // 2. Listen to cases: count active cases
+    const qCases = query(collection(db, 'cases'));
+    const unsubscribeCases = onSnapshot(qCases, (snapshot) => {
+      const docs = snapshot.docs.map(doc => doc.data());
+      const active = docs.filter((item: any) => {
+        return item.status !== 'closed' && item.status !== 'archived';
+      });
+      setActiveCasesCount(active.length);
+    }, (error) => {
+      console.error("Error listening to cases for sidebar badges:", error);
+    });
+
+    // 3. Listen to appEvents for unread notifications count
+    const fetchUnreadNotifications = () => {
+      const qEvents = query(collection(db, 'appEvents'));
+      const unsubscribeEvents = onSnapshot(qEvents, (snapshot) => {
+        const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const lastSeen = localStorage.getItem('last_seen_event_time') || '0';
+        const unread = docs.filter((e: any) => {
+          const time = (e.createdAt && 'toMillis' in e.createdAt) ? e.createdAt.toMillis() : 0;
+          return time > parseInt(lastSeen);
+        }).length;
+        setUnreadNotificationsCount(unread);
+      }, (error) => {
+        console.error("Error listening to appEvents for sidebar badges:", error);
+      });
+      return unsubscribeEvents;
+    };
+
+    let unsubscribeEvents = fetchUnreadNotifications();
+
+    // Listen to custom updates from NotificationsBell to immediately refresh count
+    const handleEventsRead = () => {
+      setUnreadNotificationsCount(0);
+    };
+
+    window.addEventListener('on-last-seen-updated', handleEventsRead);
+
+    return () => {
+      unsubscribeRequests();
+      unsubscribeCases();
+      unsubscribeEvents();
+      window.removeEventListener('on-last-seen-updated', handleEventsRead);
+    };
+  }, [user?.uid, isAdmin]);
 
   const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
@@ -40,6 +112,20 @@ export default function Sidebar({
     { icon: Info, label: 'About', path: '/about', adminOnly: true },
     { icon: Settings, label: 'Profile', path: '/profile' },
   ];
+
+  const getBadgeValue = (path: string) => {
+    if (path === '/requests') return pendingRequestsCount;
+    if (path === '/cases') return activeCasesCount;
+    if (path === '/settings/notifications') return unreadNotificationsCount;
+    return 0;
+  };
+
+  const getBadgeColor = (path: string) => {
+    if (path === '/requests') return 'bg-amber-500 text-white';
+    if (path === '/cases') return 'bg-sky-500 text-white';
+    if (path === '/settings/notifications') return 'bg-rose-500 text-white';
+    return 'bg-indigo-500 text-white';
+  };
 
   const translatedLabel = (label: string) => {
     return {
@@ -83,6 +169,8 @@ export default function Sidebar({
             (item.path === '/' && location.pathname === '/dashboard') || 
             (item.path === '/cases' && location.pathname.startsWith('/cases'));
           const labelText = translatedLabel(item.label);
+          const badgeValue = getBadgeValue(item.path);
+          const badgeColor = getBadgeColor(item.path);
 
           return (
             <Link
@@ -98,7 +186,31 @@ export default function Sidebar({
               )}
             >
               <item.icon size={20} className={cn("shrink-0 transition-transform duration-300 group-hover:scale-110", isActive ? "text-white" : "text-slate-400 group-hover:text-indigo-400")} />
-              {!isSidebarCollapsed && <span className="truncate whitespace-nowrap">{labelText}</span>}
+              
+              {!isSidebarCollapsed && (
+                <span className="truncate whitespace-nowrap flex-1 text-right">{labelText}</span>
+              )}
+
+              {/* Badge for Expanded Sidebar */}
+              {!isSidebarCollapsed && badgeValue > 0 && (
+                <span className={cn(
+                  "text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 shadow-sm transition-all duration-300 group-hover:scale-105",
+                  badgeColor
+                )}>
+                  {badgeValue}
+                </span>
+              )}
+
+              {/* Badge for Collapsed Sidebar */}
+              {isSidebarCollapsed && badgeValue > 0 && (
+                <span className={cn(
+                  "absolute top-2 left-6 min-w-4 h-4 text-[9px] font-black flex items-center justify-center rounded-full px-1 border border-slate-900 shadow-md",
+                  badgeColor
+                )}>
+                  {badgeValue > 99 ? '99+' : badgeValue}
+                </span>
+              )}
+
               {isActive && !isSidebarCollapsed && (
                 <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-indigo-400 rounded-l-full"></div>
               )}

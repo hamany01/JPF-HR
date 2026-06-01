@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, collection, getDocs, addDoc, updateDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { db, auth } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
 import { createCaseEvent } from '../services/eventService';
 import { motion, AnimatePresence } from 'motion/react';
@@ -49,8 +49,8 @@ export default function CaseDetailsPage() {
   // Edit form state
   const [editForm, setEditForm] = useState<any>({});
 
-  const canAddItems = ['admin', 'company_manager', 'company_assistant', 'law_manager', 'law_assistant'].includes(profile?.role || '');
-  const canEditCase = ['admin', 'company_manager', 'company_assistant', 'law_manager'].includes(profile?.role || '');
+  const canAddItems = ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '');
+  const canEditCase = ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager'].includes(profile?.role || '');
   
   // Subcollections data
   const [tabData, setTabData] = useState<any[]>([]);
@@ -98,10 +98,22 @@ export default function CaseDetailsPage() {
     if (!caseId) return;
     setLoading(true);
     try {
-      const docRef = doc(db, 'cases', caseId);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const data: any = { id: docSnap.id, ...docSnap.data() };
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        console.warn("No token available yet.");
+        setLoading(false);
+        return;
+      }
+      
+      const response = await fetch(`/api/cases/${caseId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const result = await response.json();
+      
+      if (result.success && result.data) {
+        const data = result.data;
         setCaseData(data);
         
         let formattedDate = '';
@@ -113,7 +125,7 @@ export default function CaseDetailsPage() {
         }
         setEditForm({ ...data, fileDate: formattedDate });
       } else {
-        alert('القضية غير موجودة');
+        alert(result.message || 'القضية المطلوبة غير موجودة أو غير مصرح لك بمشاهدتها');
         navigate('/cases');
       }
     } catch (error) {
@@ -130,16 +142,121 @@ export default function CaseDetailsPage() {
     fetchAllUsers();
   }, [caseId]);
 
+  const [lawFirmManagers, setLawFirmManagers] = useState<any[]>([]);
+  const [lawFirmAssistants, setLawFirmAssistants] = useState<any[]>([]);
+  const [salesEmployees, setSalesEmployees] = useState<any[]>([]);
+  const [transitioning, setTransitioning] = useState(false);
+  const [submittingAssignment, setSubmittingAssignment] = useState(false);
+  const [assignForm, setAssignForm] = useState({
+    assignmentType: 'internal',
+    lawFirmId: '',
+    assignedAssistantId: '',
+    salesEmployeeId: ''
+  });
+
   const fetchAllUsers = async () => {
     try {
       const usersSnap = await getDocs(collection(db, 'users'));
       const usersMap: Record<string, string> = {};
-      usersSnap.docs.forEach(doc => {
-        usersMap[doc.id] = doc.data().name || 'مستخدم';
+      const lfManagers: any[] = [];
+      const lfAssistants: any[] = [];
+      const sales: any[] = [];
+
+      usersSnap.docs.forEach(docSnap => {
+        const udata = docSnap.data();
+        const uid = docSnap.id;
+        usersMap[uid] = udata.name || udata.fullName || 'مستخدم';
+        
+        if (udata.role === 'law_firm_manager') {
+          lfManagers.push({ id: uid, name: udata.name || udata.fullName || uid, ...udata });
+        } else if (udata.role === 'law_firm_assistant') {
+          lfAssistants.push({ id: uid, name: udata.name || udata.fullName || uid, ...udata });
+        } else if (udata.role === 'sales_employee') {
+          sales.push({ id: uid, name: udata.name || udata.fullName || uid, ...udata });
+        }
       });
+
       setAllUsers(usersMap);
+      setLawFirmManagers(lfManagers);
+      setLawFirmAssistants(lfAssistants);
+      setSalesEmployees(sales);
     } catch (error) {
       console.error("Error fetching users:", error);
+    }
+  };
+
+  useEffect(() => {
+    if (caseData) {
+      setAssignForm({
+        assignmentType: caseData.assignmentType || 'internal',
+        lawFirmId: caseData.lawFirmId || '',
+        assignedAssistantId: caseData.assignedAssistantId || '',
+        salesEmployeeId: caseData.salesEmployeeId || ''
+      });
+    }
+  }, [caseData]);
+
+  const handleTransitionStatus = async (newStatus: string) => {
+    if (!caseId) return;
+    setTransitioning(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error("لم يتم تلقيم جلسة التحقق الحالية.");
+
+      const response = await fetch(`/api/cases/${caseId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        await fetchCase(); // reload case details
+      } else {
+        alert("فشل تحديث المرحلة: " + result.message);
+      }
+    } catch (err: any) {
+      alert("خطأ أثناء تحديث حالة المرحلة: " + err.message);
+    } finally {
+      setTransitioning(false);
+    }
+  };
+
+  const handleUpdateAssignment = async () => {
+    if (!caseId) return;
+    setSubmittingAssignment(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error("لم يتم تلقيم كود تحقيق الهوية.");
+
+      const response = await fetch(`/api/cases/${caseId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          assignmentType: assignForm.assignmentType,
+          lawFirmId: assignForm.lawFirmId || null,
+          assignedAssistantId: assignForm.assignedAssistantId || null,
+          salesEmployeeId: assignForm.salesEmployeeId || null
+        })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        alert("تم تحديث أسماء وبيانات الإسناد بنجاح! 🎉");
+        await fetchCase();
+      } else {
+        alert("فشل التحديث: " + result.message);
+      }
+    } catch (error: any) {
+      alert("خطأ: " + error.message);
+    } finally {
+      setSubmittingAssignment(false);
     }
   };
 
@@ -251,17 +368,32 @@ export default function CaseDetailsPage() {
       const remaining = claim - received;
       const selectedStatus = statusOptions.find(s => s.value === editForm.status);
 
-      const updateData = {
+      const payload = {
         ...editForm,
-        fileDate: editForm.fileDate ? Timestamp.fromDate(new Date(editForm.fileDate)) : null,
         claimAmount: claim,
         receivedAmount: received,
         remainingAmount: remaining,
         statusLabel: selectedStatus?.label || editForm.statusLabel,
-        updatedAt: serverTimestamp()
       };
-      
-      await updateDoc(doc(db, 'cases', caseId), updateData);
+
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        throw new Error('لم يتم العثور على صلاحية الجلسة الحالية');
+      }
+
+      const response = await fetch(`/api/cases/${caseId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.message || 'فشل تعديل القضية عبر الخادم');
+      }
       
       // Log event if status changed
       if (caseData.status !== editForm.status) {
@@ -282,7 +414,6 @@ export default function CaseDetailsPage() {
         });
       }
 
-      setCaseData({...caseData, ...updateData});
       setIsEditModalOpen(false);
       fetchCase();
     } catch (error: any) {
@@ -432,6 +563,255 @@ export default function CaseDetailsPage() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* ========================================================= */}
+      {/* PHASE 2 - WORKFLOW STEPPER & ASSIGNMENT PANEL */}
+      {/* ========================================================= */}
+      <div className="bg-white border border-slate-200 rounded-[2.5rem] p-8 shadow-sm space-y-6">
+        <div>
+          <h2 className="text-xl font-bold font-sans text-slate-800 flex items-center gap-2">
+            <Scale className="text-indigo-600" size={24} />
+            <span>لوحة مراحل وسير العمل التنفيذي (Case Lifecycle)</span>
+          </h2>
+          <p className="text-xs text-slate-400 font-medium">متابعة مسار الإجراءات التنفيذية وإسنادها إلى موظفي المبيعات ومكاتب المحاماة</p>
+        </div>
+
+        {/* Dynamic Horizontal Stepper */}
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          {[
+            { key: 'draft', label: 'مسودة', desc: 'القضية مسودة أولية', col: 'text-slate-600 bg-slate-50' },
+            { key: 'under_review', label: 'تحت المراجعة', desc: 'قيد التدقيق والتحقق', col: 'text-amber-750 bg-amber-50' },
+            { key: 'internal', label: 'متابعة داخلية', desc: 'متابعة بداخل الشركة', col: 'text-cyan-750 bg-cyan-50' },
+            { key: 'external_assigned', label: 'إسناد خارجي', desc: 'إحالتها لمكتب محاماة', col: 'text-purple-750 bg-purple-50' },
+            { key: 'in_court', label: 'بالمحكمة', desc: 'جلسات وقرارات المحاكم', col: 'text-indigo-750 bg-indigo-50' },
+            { key: 'closed', label: 'مغلقة ومكتملة', desc: 'تم تسديد كامل المبلغ', col: 'text-emerald-750 bg-emerald-50' }
+          ].map((step, idx) => {
+            const isCurrent = caseData.status === step.key;
+            return (
+              <div 
+                key={step.key} 
+                className={cn(
+                  "p-5 rounded-2xl border transition-all text-right relative flex flex-col justify-between overflow-hidden",
+                  isCurrent 
+                    ? "border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-50/10 shadow-sm" 
+                    : "border-slate-100 bg-slate-50/30"
+                )}
+              >
+                {isCurrent && (
+                  <div className="absolute top-0 right-0 left-0 h-1 bg-indigo-600" />
+                )}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-400 font-mono">الخطوة {idx + 1}</span>
+                    {isCurrent && <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-pulse" />}
+                  </div>
+                  <h4 className="font-sans font-black text-slate-900 text-sm">{step.label}</h4>
+                  <p className="text-[10px] text-slate-400 font-medium leading-normal mt-1">{step.desc}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Status Actions Block */}
+        <div className="flex flex-wrap items-center gap-4 bg-slate-50/50 p-6 rounded-3xl border border-slate-100">
+          <div className="shrink-0 font-sans">
+            <span className="text-xs text-slate-400 font-black block mb-1">التحكم في المرحلة</span>
+            <span className="text-sm font-bold text-slate-800">الانتقال للمرحلة التالية:</span>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Show transitions dynamically */}
+            {transitioning ? (
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-400 font-sans">
+                <Loader2 size={16} className="animate-spin text-indigo-600" />
+                <span>جاري حفظ وتوثيق المعاملة...</span>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2 font-sans">
+                {/* Draft -> Under Review */}
+                {caseData.status === 'draft' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '') && (
+                  <button 
+                    onClick={() => handleTransitionStatus('under_review')}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-black rounded-xl transition-all"
+                  >
+                    إرسال للمراجعة
+                  </button>
+                )}
+
+                {/* Under Review -> Internal OR External_Assigned */}
+                {caseData.status === 'under_review' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '') && (
+                  <>
+                    <button 
+                      onClick={() => handleTransitionStatus('internal')}
+                      className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-black rounded-xl transition-all"
+                    >
+                      إقرار متابعة داخلية
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (!caseData.lawFirmId) {
+                          alert("تنبيه: يجب إسناد القضية لمكتب محاماة خارجي أولاً وحفظ بيانات الإسناد من الجدول بالأسفل.");
+                        } else {
+                          handleTransitionStatus('external_assigned');
+                        }
+                      }}
+                      className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-black rounded-xl transition-all"
+                    >
+                      إقرار إسناد لمستشار خارجي
+                    </button>
+                  </>
+                )}
+
+                {/* Internal -> Court OR Closed */}
+                {caseData.status === 'internal' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '') && (
+                  <>
+                    <button 
+                      onClick={() => handleTransitionStatus('closed')}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all"
+                    >
+                      إغلاق القضية (تسوية كاملة)
+                    </button>
+                  </>
+                )}
+
+                {/* External Assigned -> Court OR Closed */}
+                {caseData.status === 'external_assigned' && (
+                  <>
+                    {/* Company Managers and External Law Managers can transition */}
+                    {['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '') && (
+                      <button 
+                        onClick={() => handleTransitionStatus('in_court')}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-750 text-white text-xs font-black rounded-xl transition-all"
+                      >
+                        إحالة المحاكمة (حضور الجلسات)
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {/* In Court -> Closed */}
+                {caseData.status === 'in_court' && (
+                  <>
+                    {['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '') && (
+                      <button 
+                        onClick={() => handleTransitionStatus('closed')}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all"
+                      >
+                        إغلاق القضية بانتهاء التحصيل
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {/* Closed -> Reopen to Review */}
+                {caseData.status === 'closed' && ['admin', 'company_manager'].includes(profile?.role || '') && (
+                  <button 
+                    onClick={() => handleTransitionStatus('under_review')}
+                    className="px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white text-xs font-black rounded-xl transition-all"
+                  >
+                    إعادة فتح القضية للتدقيق
+                  </button>
+                )}
+
+                {/* No transitions found or allowed */}
+                {!(
+                  (caseData.status === 'draft' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '')) ||
+                  (caseData.status === 'under_review' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '')) ||
+                  (caseData.status === 'internal' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '')) ||
+                  (caseData.status === 'external_assigned' && ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '')) ||
+                  (caseData.status === 'in_court' && ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '')) ||
+                  (caseData.status === 'closed' && ['admin', 'company_manager'].includes(profile?.role || ''))
+                ) && (
+                  <span className="text-xs text-slate-400 font-bold bg-slate-100 px-3 py-1 rounded-lg">لا توجد إجراءات متاحة لصلاحيات دورك الحالي على هذه القضية حالياً.</span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Assignment & Designation Panel (Managers Only) */}
+        {['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '') && (
+          <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-black font-sans text-slate-800 flex items-center gap-2">
+                <UserCheck size={18} className="text-indigo-600" />
+                <span>إعدادات وهيكلة الإسناد والمهام للقضية</span>
+              </h3>
+              <button 
+                onClick={handleUpdateAssignment}
+                disabled={submittingAssignment}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 transition-all active:scale-95 shadow-sm font-sans"
+              >
+                {submittingAssignment ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                <span>حفظ التعديلات الحالية</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 font-sans">
+              {/* Assignment Type */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-indigo-600 uppercase tracking-wider block">نوع المتابعة والإشراف</label>
+                <select 
+                  value={assignForm.assignmentType}
+                  onChange={(e) => setAssignForm({ ...assignForm, assignmentType: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-705"
+                >
+                  <option value="internal">داخلي (بالشركة)</option>
+                  <option value="external">خارجي (من مكتب محاماة متعاون)</option>
+                </select>
+              </div>
+
+              {/* Law Firm Manager Dropdown */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 block">مكتب المحاماة الخارجي (المدير)</label>
+                <select
+                  disabled={assignForm.assignmentType === 'internal'}
+                  value={assignForm.lawFirmId}
+                  onChange={(e) => setAssignForm({ ...assignForm, lawFirmId: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 disabled:opacity-50"
+                >
+                  <option value="">-- لم يتم إسناد محامي خارجي بعد --</option>
+                  {lawFirmManagers.map(m => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Law Firm Assistant Dropdown */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 block">المسؤول المعين بمكتب المحاماة</label>
+                <select
+                  disabled={assignForm.assignmentType === 'internal' || !assignForm.lawFirmId}
+                  value={assignForm.assignedAssistantId}
+                  onChange={(e) => setAssignForm({ ...assignForm, assignedAssistantId: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 disabled:opacity-50"
+                >
+                  <option value="">-- لم يتم تحديد مساعد مسؤول بعد --</option>
+                  {lawFirmAssistants.map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* JPF Sales Employee Dropdown */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 block">مندوب أو موظف المبيعات المسؤول</label>
+                <select
+                  value={assignForm.salesEmployeeId}
+                  onChange={(e) => setAssignForm({ ...assignForm, salesEmployeeId: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 font-sans"
+                >
+                  <option value="">-- لم يتم إسناد مندوب مبيعات بعد --</option>
+                  {salesEmployees.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Data Grid */}

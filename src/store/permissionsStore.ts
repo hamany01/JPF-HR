@@ -26,46 +26,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
       assignEmployee: true,
     },
   },
-  law_manager: {
-    role: 'law_manager',
-    label: 'المحامي العام (مدير الشؤون القانونية)',
-    fields: {
-      serialNumber: 'full',
-      clientName: 'full',
-      nationalId: 'full',
-      financialAmounts: 'full',
-      attachments: 'full',
-      sessionsInfo: 'full',
-    },
-    actions: {
-      createRequest: true,
-      editRequest: true,
-      deleteRequest: false,
-      addNote: true,
-      deleteNote: true,
-      assignEmployee: true,
-    },
-  },
-  law_assistant: {
-    role: 'law_assistant',
-    label: 'مساعد الشؤون القانونية',
-    fields: {
-      serialNumber: 'full',
-      clientName: 'full',
-      nationalId: 'masked',
-      financialAmounts: 'full',
-      attachments: 'full',
-      sessionsInfo: 'full',
-    },
-    actions: {
-      createRequest: true,
-      editRequest: true,
-      deleteRequest: false,
-      addNote: true,
-      deleteNote: false,
-      assignEmployee: false,
-    },
-  },
   company_manager: {
     role: 'company_manager',
     label: 'مدير الشركة (صاحب العمل)',
@@ -86,9 +46,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
       assignEmployee: true,
     },
   },
-  company_assistant: {
-    role: 'company_assistant',
-    label: 'مساعد الشركة',
+  assistant_manager: {
+    role: 'assistant_manager',
+    label: 'مساعد مدير الشركة (مشرف)',
     fields: {
       serialNumber: 'full',
       clientName: 'full',
@@ -103,12 +63,12 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
       deleteRequest: false,
       addNote: true,
       deleteNote: false,
-      assignEmployee: false,
+      assignEmployee: true,
     },
   },
-  employee: {
-    role: 'employee',
-    label: 'موظف (صلاحيات محدودة)',
+  sales_employee: {
+    role: 'sales_employee',
+    label: 'موظف مبيعات ميداني',
     fields: {
       serialNumber: 'full',
       clientName: 'full',
@@ -120,6 +80,46 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     actions: {
       createRequest: false,
       editRequest: false,
+      deleteRequest: false,
+      addNote: true,
+      deleteNote: false,
+      assignEmployee: false,
+    },
+  },
+  law_firm_manager: {
+    role: 'law_firm_manager',
+    label: 'مدير مكتب المحاماة الشريك',
+    fields: {
+      serialNumber: 'full',
+      clientName: 'full',
+      nationalId: 'full',
+      financialAmounts: 'full',
+      attachments: 'full',
+      sessionsInfo: 'full',
+    },
+    actions: {
+      createRequest: true,
+      editRequest: true,
+      deleteRequest: false,
+      addNote: true,
+      deleteNote: true,
+      assignEmployee: true,
+    },
+  },
+  law_firm_assistant: {
+    role: 'law_firm_assistant',
+    label: 'محامي مساعد بمكتب الشركاء',
+    fields: {
+      serialNumber: 'full',
+      clientName: 'full',
+      nationalId: 'masked',
+      financialAmounts: 'full',
+      attachments: 'full',
+      sessionsInfo: 'full',
+    },
+    actions: {
+      createRequest: false,
+      editRequest: true,
       deleteRequest: false,
       addNote: true,
       deleteNote: false,

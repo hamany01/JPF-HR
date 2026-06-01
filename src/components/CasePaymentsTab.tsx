@@ -10,7 +10,7 @@ import {
   Timestamp,
   getDoc
 } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { db, auth } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
 import { createCaseEvent } from '../services/eventService';
 import { 
@@ -23,7 +23,11 @@ import {
   AlertTriangle, 
   Loader2, 
   CheckCircle2,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  MessageSquare,
+  DollarSign,
+  Check,
+  CheckCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -71,6 +75,152 @@ export default function CasePaymentsTab({
     date: new Date().toISOString().split('T')[0],
     notes: ''
   });
+
+  // --- STATE FOR MANUAL PAYMENT PLANS (Phase 2) ---
+  const [caseInfo, setCaseInfo] = useState<any>(null);
+  const [paymentPlans, setPaymentPlans] = useState<any[]>([]);
+  const [plansLoading, setPlansLoading] = useState(true);
+  const [submittingPlan, setSubmittingPlan] = useState(false);
+  const [newPlan, setNewPlan] = useState({
+    installmentAmount: '',
+    dueDate: new Date().toISOString().split('T')[0],
+    notes: ''
+  });
+
+  const isJPFManager = ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '');
+  const isSalesEmployee = profile?.role === 'sales_employee';
+
+  // Fetch Parent Case Info
+  useEffect(() => {
+    if (!caseId) return;
+    const fetchCaseInfo = async () => {
+      try {
+        const caseDoc = await getDoc(doc(db, 'cases', caseId));
+        if (caseDoc.exists()) {
+          setCaseInfo(caseDoc.data());
+        }
+      } catch (err) {
+        console.error("Error fetching case info for layout:", err);
+      }
+    };
+    fetchCaseInfo();
+  }, [caseId]);
+
+  // Fetch plans
+  const fetchPaymentPlans = async () => {
+    if (!caseId) return;
+    setPlansLoading(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) return;
+
+      const response = await fetch(`/api/cases/${caseId}/payment-plans`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const result = await response.json();
+      if (result.success && Array.isArray(result.data)) {
+        setPaymentPlans(result.data);
+      }
+    } catch (error) {
+      console.error("Error loading payment plans:", error);
+    } finally {
+      setPlansLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPaymentPlans();
+  }, [caseId]);
+
+  // Create manual plan installment
+  const handleCreatePlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amt = parseFloat(newPlan.installmentAmount);
+    if (!newPlan.dueDate || isNaN(amt) || amt <= 0) {
+      alert("الرجاء إدخال تفاصيل صحيحة للقسط.");
+      return;
+    }
+
+    setSubmittingPlan(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) return;
+
+      const response = await fetch(`/api/cases/${caseId}/payment-plans`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          installmentAmount: amt,
+          dueDate: newPlan.dueDate,
+          notes: newPlan.notes
+        })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setNewPlan({
+          installmentAmount: '',
+          dueDate: new Date().toISOString().split('T')[0],
+          notes: ''
+        });
+        fetchPaymentPlans();
+      } else {
+        alert("فشل إضافة القسط: " + result.message);
+      }
+    } catch (err: any) {
+      alert("خطأ: " + err.message);
+    } finally {
+      setSubmittingPlan(false);
+    }
+  };
+
+  // Toggle/Update installment status
+  const handleUpdatePlanStatus = async (planId: string, newStatus: string, paidAmountVal: number) => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) return;
+
+      const response = await fetch(`/api/payment-plans/${planId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          status: newStatus,
+          paidAmount: parseFloat(String(paidAmountVal)) || 0
+        })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        fetchPaymentPlans();
+        onRefresh(); // sync the master received and remaining amounts
+      } else {
+        alert("حدث خطأ أثناء تحديث حالة القسط: " + result.message);
+      }
+    } catch (error: any) {
+      alert("خطأ في الاتصال بالخادم: " + error.message);
+    }
+  };
+
+  const getWhatsAppLink = (plan: any) => {
+    const phone = caseInfo?.defendantPhone || '';
+    let cleaned = phone.trim().replace(/\s+/g, '');
+    if (cleaned.startsWith('05')) {
+      cleaned = '966' + cleaned.substring(1);
+    }
+    const name = caseInfo?.defendantName || 'العميل الكريم';
+    const rawDate = new Date(plan.dueDate);
+    const dateFormatted = !isNaN(rawDate.getTime()) ? rawDate.toLocaleDateString('en-GB') : plan.dueDate;
+    const msg = `عزيزنا العميل: ${name}، نود تذكيركم بوجود قسط مستحق بقيمة ${plan.installmentAmount} ر.س ومستحق السداد بحلول تاريخ ${dateFormatted}. يرجى التكرم بالسداد في أقرب وقت لتفادي أي إجراءات نظامية. شاكرين ومقدرين لكم تعاونكم الرائع.`;
+    return `https://wa.me/${cleaned}?text=${encodeURIComponent(msg)}`;
+  };
 
   const canManagePayments = ['admin', 'company_manager', 'law_manager'].includes(profile?.role || '');
 
@@ -515,6 +665,225 @@ export default function CasePaymentsTab({
                 </tr>
               </tfoot>
             )}
+          </table>
+        </div>
+      </div>
+
+      {/* ========================================================= */}
+      {/* PHASE 2 - MANUAL PAYMENT PLANS SECTION */}
+      {/* ========================================================= */}
+      <div className="border-t border-slate-100 pt-10 space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+              <CalendarIcon size={22} className="text-indigo-600" />
+              <span>خطة الأقساط اليدوية لجدولة السداد</span>
+            </h3>
+            <p className="text-xs text-slate-400 font-medium mt-1">تتيح لمدراء النظام جدولة وجباية مستحقات القضية على شكل دفعات مرنة</p>
+          </div>
+        </div>
+
+        {/* 1) Add Installment Form (Managers Only) */}
+        {isJPFManager && !isClosed && (
+          <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-8 shadow-sm">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-2.5 bg-indigo-600 text-white rounded-xl">
+                <Plus size={20} />
+              </div>
+              <div>
+                <h4 className="text-lg font-black text-slate-900">جدولة قسط جديد للعميل</h4>
+                <p className="text-xs text-slate-500 font-medium">قم بتحديد قيمة الاستحقاق وجدولته زمنياً</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleCreatePlan} className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end font-sans">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">قيمة القسط المستحق</label>
+                <div className="relative">
+                  <input
+                    required
+                    type="number"
+                    step="0.01"
+                    value={newPlan.installmentAmount}
+                    onChange={(e) => setNewPlan({ ...newPlan, installmentAmount: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-3.5 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-black text-slate-900 font-mono"
+                    placeholder="0.00"
+                  />
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">ر.س</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">تاريخ الاستحقاق</label>
+                <input
+                  required
+                  type="date"
+                  value={newPlan.dueDate}
+                  onChange={(e) => setNewPlan({ ...newPlan, dueDate: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-3.5 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-705 text-right"
+                />
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">ملاحظات إضافية</label>
+                <div className="flex gap-4">
+                  <input
+                    type="text"
+                    value={newPlan.notes}
+                    onChange={(e) => setNewPlan({ ...newPlan, notes: e.target.value })}
+                    placeholder="قسط الدفعة الأولى أو ملاحظة خاصة..."
+                    className="flex-1 bg-white border border-slate-200 rounded-2xl px-5 py-3.5 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-medium text-slate-700"
+                  />
+                  <button
+                    type="submit"
+                    disabled={submittingPlan}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3.5 rounded-2xl font-black transition-all flex items-center justify-center gap-2 active:scale-95 text-sm whitespace-nowrap shadow-xl shadow-indigo-100"
+                  >
+                    {submittingPlan ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                    جدولة القسط
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* 2) Installment Schedule Table */}
+        <div className="bg-white border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm">
+          <table className="w-full text-right border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100">
+                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">تاريخ الاستحقاق</th>
+                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">قيمة القسط</th>
+                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">المبلغ المدفوع فعلياً</th>
+                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">ملاحظات</th>
+                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">الحالة</th>
+                <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {plansLoading ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-20 text-center">
+                    <Loader2 size={32} className="text-indigo-600 animate-spin mx-auto mb-4" />
+                    <span className="text-slate-400 font-bold">جاري تحميل جدول الأقساط...</span>
+                  </td>
+                </tr>
+              ) : paymentPlans.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-20 text-center">
+                    <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <CalendarIcon size={32} className="text-slate-200" />
+                    </div>
+                    <p className="text-slate-400 font-bold">لم تتم جدولة أي أقساط يدوية لهذه القضية حتى الآن.</p>
+                  </td>
+                </tr>
+              ) : (
+                paymentPlans.map((plan: any) => {
+                  const rawDate = new Date(plan.dueDate);
+                  const dateFormatted = !isNaN(rawDate.getTime()) ? rawDate.toLocaleDateString('en-GB') : plan.dueDate;
+                  const dateHijri = !isNaN(rawDate.getTime()) ? rawDate.toLocaleDateString('ar-SA-u-ca-islamic-uma-nu-latn', { day: 'numeric', month: 'numeric', year: 'numeric' }) : '';
+                  
+                  return (
+                    <tr key={plan.id} className="hover:bg-slate-50/50 transition-colors group">
+                      <td className="px-6 py-5">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-slate-800 font-mono tracking-tight">
+                            {dateFormatted}
+                          </span>
+                          {dateHijri && (
+                            <span className="text-[10px] text-slate-400 font-medium">
+                              {dateHijri} هـ
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <div className="text-lg font-black text-slate-900 font-mono tracking-tighter">
+                          {plan.installmentAmount?.toLocaleString()} <span className="text-[10px] font-bold text-slate-400">ر.س</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <div className="text-base font-bold text-slate-600 font-mono">
+                          {plan.paidAmount?.toLocaleString() || '0'} <span className="text-[10px] font-bold text-slate-400">ر.س</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <p className="text-sm text-slate-500 font-medium max-w-xs">{plan.notes || '—'}</p>
+                      </td>
+                      <td className="px-6 py-5">
+                        <span className={cn(
+                          "px-2.5 py-1.5 rounded-lg text-xs font-bold border block w-fit shadow-xs",
+                          plan.status === 'paid' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                          plan.status === 'overdue' ? "bg-rose-50 text-rose-700 border-rose-100" :
+                          "bg-amber-50 text-amber-700 border-amber-100"
+                        )}>
+                          {plan.status === 'paid' ? 'مسدد بالكامل' :
+                           plan.status === 'overdue' ? 'متأخرات السداد' : 'قيد الانتظار'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-5 text-left">
+                        <div className="flex items-center justify-end gap-2">
+                          {/* JPF managers actions */}
+                          {isJPFManager && !isClosed && (
+                            <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all font-sans">
+                              {/* If not paid yet, enable quick trigger pay */}
+                              {plan.status !== 'paid' && (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      const confirmPay = window.confirm(`هل تريد تسديد هذا القسط بالكامل بقيمة ${plan.installmentAmount} ر.س؟`);
+                                      if (confirmPay) {
+                                        handleUpdatePlanStatus(plan.id, 'paid', plan.installmentAmount);
+                                      }
+                                    }}
+                                    className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-600 hover:text-white transition-all flex items-center gap-1 shrink-0"
+                                    title="تسجيل سداد بالكامل"
+                                  >
+                                    <CheckCircle size={14} />
+                                    <span>تسديد بالكامل</span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdatePlanStatus(plan.id, 'overdue', plan.paidAmount || 0)}
+                                    className="px-2 py-1.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-xl text-xs font-semibold hover:bg-rose-100 transition-all shrink-0"
+                                    title="وضع كمتأخر"
+                                  >
+                                    متأخر
+                                  </button>
+                                </>
+                              )}
+                              {plan.status === 'paid' && (
+                                <button
+                                  onClick={() => handleUpdatePlanStatus(plan.id, 'pending', 0)}
+                                  className="px-2 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 transition-all shrink-0"
+                                  title="إعادة جارية للانتظار"
+                                >
+                                  إعادة للانتظار
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {/* WhatsApp Reminder (Managers and Law Firms can send reminders; NOT sales_employee) */}
+                          {!isSalesEmployee && (
+                            <a
+                              href={getWhatsAppLink(plan)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-2.5 bg-emerald-50 hover:bg-emerald-110 text-emerald-600 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs font-black self-center"
+                              title="توليد وتلقيم تذكير بالواتساب"
+                            >
+                              <MessageSquare size={16} />
+                              <span className="hidden sm:inline">إرسال تذكير بالواتساب</span>
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
           </table>
         </div>
       </div>

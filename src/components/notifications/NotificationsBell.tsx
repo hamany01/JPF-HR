@@ -50,6 +50,7 @@ export default function NotificationsBell() {
       const latestTime = (events[0].createdAt && 'toMillis' in events[0].createdAt) ? events[0].createdAt.toMillis() : 0;
       localStorage.setItem('last_seen_event_time', latestTime.toString());
       setUnreadCount(0);
+      window.dispatchEvent(new Event('on-last-seen-updated'));
     }
   };
 
