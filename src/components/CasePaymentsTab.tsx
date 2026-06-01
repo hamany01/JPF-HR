@@ -8,7 +8,11 @@ import {
   runTransaction, 
   serverTimestamp, 
   Timestamp,
-  getDoc
+  getDoc,
+  where,
+  getDocs,
+  addDoc,
+  updateDoc
 } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
@@ -111,18 +115,11 @@ export default function CasePaymentsTab({
     if (!caseId) return;
     setPlansLoading(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) return;
-
-      const response = await fetch(`/api/cases/${caseId}/payment-plans`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      const result = await response.json();
-      if (result.success && Array.isArray(result.data)) {
-        setPaymentPlans(result.data);
-      }
+      const plansRef = collection(db, 'payment_plans');
+      const q = query(plansRef, where('caseId', '==', caseId), where('isDeleted', '==', false), orderBy('dueDate', 'asc'));
+      const snapshot = await getDocs(q);
+      const plansList = snapshot.docs.map(doc => ({ id: doc.id, planId: doc.id, ...doc.data() }));
+      setPaymentPlans(plansList);
     } catch (error) {
       console.error("Error loading payment plans:", error);
     } finally {
@@ -145,33 +142,30 @@ export default function CasePaymentsTab({
 
     setSubmittingPlan(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) return;
+      const activeUser = auth.currentUser;
+      if (!activeUser) return;
 
-      const response = await fetch(`/api/cases/${caseId}/payment-plans`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          installmentAmount: amt,
-          dueDate: newPlan.dueDate,
-          notes: newPlan.notes
-        })
+      const plansRef = collection(db, 'payment_plans');
+      await addDoc(plansRef, {
+        caseId,
+        installmentAmount: amt,
+        dueDate: newPlan.dueDate,
+        notes: newPlan.notes || '',
+        status: 'planned',
+        paidAmount: 0,
+        paidAt: null,
+        isDeleted: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdBy: activeUser.uid
       });
 
-      const result = await response.json();
-      if (result.success) {
-        setNewPlan({
-          installmentAmount: '',
-          dueDate: new Date().toISOString().split('T')[0],
-          notes: ''
-        });
-        fetchPaymentPlans();
-      } else {
-        alert("فشل إضافة القسط: " + result.message);
-      }
+      setNewPlan({
+        installmentAmount: '',
+        dueDate: new Date().toISOString().split('T')[0],
+        notes: ''
+      });
+      await fetchPaymentPlans();
     } catch (err: any) {
       alert("خطأ: " + err.message);
     } finally {
@@ -182,30 +176,23 @@ export default function CasePaymentsTab({
   // Toggle/Update installment status
   const handleUpdatePlanStatus = async (planId: string, newStatus: string, paidAmountVal: number) => {
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) return;
+      const activeUser = auth.currentUser;
+      if (!activeUser) return;
 
-      const response = await fetch(`/api/payment-plans/${planId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          status: newStatus,
-          paidAmount: parseFloat(String(paidAmountVal)) || 0
-        })
+      const planDocRef = doc(db, 'payment_plans', planId);
+      const paidAmt = parseFloat(String(paidAmountVal)) || 0;
+
+      await updateDoc(planDocRef, {
+        status: newStatus,
+        paidAmount: paidAmt,
+        paidAt: (newStatus === 'paid' || newStatus === 'partially_paid') ? serverTimestamp() : null,
+        updatedAt: serverTimestamp()
       });
 
-      const result = await response.json();
-      if (result.success) {
-        fetchPaymentPlans();
-        onRefresh(); // sync the master received and remaining amounts
-      } else {
-        alert("حدث خطأ أثناء تحديث حالة القسط: " + result.message);
-      }
+      await fetchPaymentPlans();
+      onRefresh(); // sync the master received and remaining amounts
     } catch (error: any) {
-      alert("خطأ في الاتصال بالخادم: " + error.message);
+      alert("حدث خطأ أثناء تحديث حالة القسط: " + error.message);
     }
   };
 

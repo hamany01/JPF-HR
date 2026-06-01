@@ -20,7 +20,26 @@ app.use(express.json());
 // API health endpoint
 app.get('/api/health', (req, res) => {
   console.log('💚 Health check pinged');
-  res.json({ status: 'ok', time: new Date().toISOString() });
+  const safeEnvKeys = Object.keys(process.env).map(key => {
+    const val = process.env[key];
+    const isSecret = key.toLowerCase().includes('key') || 
+                     key.toLowerCase().includes('secret') || 
+                     key.toLowerCase().includes('password') || 
+                     key.toLowerCase().includes('token') ||
+                     key.toLowerCase().includes('credential');
+    return {
+      key,
+      hasValue: !!val,
+      isSecret,
+      length: val ? val.length : 0,
+      preview: isSecret ? '***HIDDEN***' : (val ? val.substring(0, 50) : '')
+    };
+  });
+  res.json({ 
+    status: 'ok', 
+    time: new Date().toISOString(), 
+    envKeys: safeEnvKeys 
+  });
 });
 
 // Lazy loader for Firebase Admin and Firestore to prevent startup blocks/crashes
@@ -167,10 +186,9 @@ app.get('/api/cases', async (req, res) => {
 
     let queryRef: any = db.collection('cases');
 
-    // Filter soft-deleted docs at query level if possible
-    if (role !== 'admin') {
-      queryRef = queryRef.where('isDeleted', '!=', true);
-    }
+    // No query-level filter on isDeleted because legacy documents don't have this field,
+    // and Firestore's '!=' query completely excludes documents lacking the queried field.
+    // Instead, we will apply this filter in-memory.
 
     const snapshot = await queryRef.get();
     let cases = snapshot.docs.map((doc: any) => ({ id: doc.id, caseId: doc.id, ...doc.data() }));
@@ -189,10 +207,17 @@ app.get('/api/cases', async (req, res) => {
       cases = [];
     }
 
-    // Force strict memory filtering for extra security
-    if (role !== 'admin') {
-      cases = cases.filter((c: any) => c.isDeleted !== true);
-    }
+    // Apply in-memory filtering for isDeleted and legacy cases
+    const isAdminRole = ['admin', 'company_manager', 'assistant_manager'].includes(role);
+    cases = cases.filter((c: any) => {
+      const hasIsDeleted = 'isDeleted' in c && c.isDeleted !== undefined;
+      if (hasIsDeleted) {
+        return c.isDeleted !== true;
+      } else {
+        // Legacy document that doesn't have isDeleted field
+        return isAdminRole;
+      }
+    });
 
     return res.json({ success: true, count: cases.length, data: cases });
   } catch (error: any) {

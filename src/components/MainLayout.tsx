@@ -30,7 +30,7 @@ export default function MainLayout() {
   const pageTitle = {
     '/': 'لوحة التحكم الرئيسية',
     '/requests': 'طلبات الموكلين الجدد',
-    '/cases': 'أرشيف القضايا القانونية',
+    '/cases': 'إدارة القضايا التنفيذية',
     '/users': 'إدارة شؤون الموظفين والصلاحيات',
     '/settings/execution': 'إعدادات التنفيذ والمواعيد',
     '/settings/notifications': 'إعدادات التنبيهات والربط الذكي',

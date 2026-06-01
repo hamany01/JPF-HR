@@ -74,41 +74,60 @@ export default function CasesListPage() {
   const fetchCases = async () => {
     setLoading(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) {
-        console.warn("No auth token available yet.");
+      const activeUser = auth.currentUser || user;
+      if (!activeUser) {
+        console.warn("No active user available yet.");
         setLoading(false);
         return;
       }
       
-      const response = await fetch('/api/cases', {
-        headers: {
-          'Authorization': `Bearer ${token}`
+      const casesCollection = collection(db, 'cases');
+      const snapshot = await getDocs(casesCollection);
+      let docs = snapshot.docs.map(doc => ({ id: doc.id, caseId: doc.id, ...doc.data() }));
+
+      // Apply role visibility filters in-memory
+      const role = profile?.role || '';
+      const uid = activeUser.uid;
+
+      if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+        // Allowed fully
+      } else if (role === 'sales_employee') {
+        docs = docs.filter((c: any) => c.salesEmployeeId === uid);
+      } else if (role === 'law_firm_manager') {
+        const pLawFirmId = profile?.lawFirmId || '';
+        docs = docs.filter((c: any) => c.lawFirmId === pLawFirmId);
+      } else if (role === 'law_firm_assistant') {
+        docs = docs.filter((c: any) => c.assignedAssistantId === uid);
+      } else {
+        docs = [];
+      }
+
+      // Filter by isDeleted
+      const isAdminRole = ['admin', 'company_manager', 'assistant_manager'].includes(role);
+      docs = docs.filter((c: any) => {
+        const hasIsDeleted = 'isDeleted' in c && c.isDeleted !== undefined;
+        if (hasIsDeleted) {
+          return c.isDeleted !== true;
+        } else {
+          return isAdminRole;
         }
       });
-      const result = await response.json();
-      
-      if (result.success && Array.isArray(result.data)) {
-        let docs = result.data;
 
-        // Apply client-side filtering safely over search and options
-        if (filters.nationality !== 'الكل') {
-          docs = docs.filter((d: any) => d.nationality === filters.nationality);
-        }
-        if (filters.status !== 'الكل') {
-          docs = docs.filter((d: any) => d.status === filters.status);
-        }
-        if (filters.platform !== 'الكل') {
-          docs = docs.filter((d: any) => d.platform === filters.platform);
-        }
-        if (filters.idType !== 'الكل') {
-          docs = docs.filter((d: any) => d.idType === filters.idType);
-        }
-
-        setCases(docs);
-      } else {
-        console.error("Failed to load cases from proxy API:", result.message);
+      // Apply client-side filtering safely over search and options
+      if (filters.nationality !== 'الكل') {
+        docs = docs.filter((d: any) => d.nationality === filters.nationality);
       }
+      if (filters.status !== 'الكل') {
+        docs = docs.filter((d: any) => d.status === filters.status);
+      }
+      if (filters.platform !== 'الكل') {
+        docs = docs.filter((d: any) => d.platform === filters.platform);
+      }
+      if (filters.idType !== 'الكل') {
+        docs = docs.filter((d: any) => d.idType === filters.idType);
+      }
+
+      setCases(docs);
     } catch (error) {
       console.error("Error fetching cases:", error);
     }
@@ -116,8 +135,10 @@ export default function CasesListPage() {
   };
 
   useEffect(() => {
-    fetchCases();
-  }, [filters.nationality, filters.status, filters.platform, filters.idType]);
+    if (user) {
+      fetchCases();
+    }
+  }, [user, profile, filters.nationality, filters.status, filters.platform, filters.idType]);
 
   useEffect(() => {
     fetchPlatforms();
@@ -277,17 +298,21 @@ export default function CasesListPage() {
     );
   };
 
-  const getLifecycleStatusBadge = (status: string) => {
+   const getLifecycleStatusBadge = (status: string) => {
     const statusMappings: { [key: string]: { label: string; bg: string; text: string; border: string } } = {
       draft: { label: 'مسودة', bg: 'bg-slate-50', text: 'text-slate-600', border: 'border-slate-200' },
       under_review: { label: 'تحت المراجعة', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
       internal: { label: 'متابعة داخلية', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+      in_progress: { label: 'متابعة داخلية', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+      on_hold: { label: 'تحت المراجعة', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
       external_assigned: { label: 'إسناد خارجي', bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200' },
       in_court: { label: 'بالمحكمة', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
       closed: { label: 'مغلقة', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
+      completed: { label: 'مغلقة', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
+      archived: { label: 'مغلقة', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
     };
 
-    const val = statusMappings[status] || { label: 'مسودة', bg: 'bg-slate-50', text: 'text-slate-600', border: 'border-slate-200' };
+    const val = statusMappings[status] || { label: 'متابعة داخلية', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' };
 
     return (
       <span className={cn("inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg border", val.bg, val.text, val.border)}>
@@ -536,7 +561,7 @@ export default function CasesListPage() {
                 nationality: 'الكل', 
                 status: 'الكل', 
                 platform: 'الكل',
-                requestNumber: '',
+                requestSerialNumber: '',
                 defendantName: '',
                 idType: 'الكل'
               })}

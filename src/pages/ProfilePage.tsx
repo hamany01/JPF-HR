@@ -61,10 +61,10 @@ export default function ProfilePage() {
   const roleTranslations: Record<string, string> = {
     'admin': 'مدير النظام',
     'company_manager': 'مدير الشركة',
-    'company_assistant': 'مساعد الشركة',
-    'law_manager': 'مدير المكتب القانوني',
-    'law_assistant': 'مساعد قانوني',
-    'employee': 'موظف'
+    'assistant_manager': 'مساعد الشركة',
+    'sales_employee': 'موظف مبيعات',
+    'law_firm_manager': 'مدير المكتب القانوني',
+    'law_firm_assistant': 'مساعد قانوني',
   };
 
   const handleUpdateProfile = async (e: React.FormEvent) => {

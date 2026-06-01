@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, collection, getDocs, addDoc, updateDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, addDoc, updateDoc, serverTimestamp, query, orderBy, Timestamp, where } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
 import { createCaseEvent } from '../services/eventService';
@@ -98,22 +98,49 @@ export default function CaseDetailsPage() {
     if (!caseId) return;
     setLoading(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) {
-        console.warn("No token available yet.");
+      const activeUser = auth.currentUser;
+      if (!activeUser) {
+        console.warn("No active user available yet.");
         setLoading(false);
         return;
       }
+
+      const docRef = doc(db, 'cases', caseId);
+      const docSnap = await getDoc(docRef);
       
-      const response = await fetch(`/api/cases/${caseId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
+      if (docSnap.exists()) {
+        const data = { id: docSnap.id, caseId: docSnap.id, ...docSnap.data() } as any;
+        
+        // Authorization check on the client-side matching the backend logic
+        const role = profile?.role || '';
+        const uid = activeUser.uid;
+        const userData = profile || {};
+
+        // Soft delete check
+        if (data.isDeleted === true && role !== 'admin') {
+          alert('غير مصرح بعرض هذه القضية المؤرشفة');
+          navigate('/cases');
+          return;
         }
-      });
-      const result = await response.json();
-      
-      if (result.success && result.data) {
-        const data = result.data;
+
+        // Role eligibility check
+        let authorized = false;
+        if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+          authorized = true;
+        } else if (role === 'sales_employee') {
+          authorized = data.salesEmployeeId === uid;
+        } else if (role === 'law_firm_manager') {
+          authorized = !!(userData.lawFirmId && data.lawFirmId === userData.lawFirmId);
+        } else if (role === 'law_firm_assistant') {
+          authorized = data.assignedAssistantId === uid;
+        }
+
+        if (!authorized) {
+          alert('ليس لديك صلاحية للاطلاع على هذه القضية');
+          navigate('/cases');
+          return;
+        }
+
         setCaseData(data);
         
         let formattedDate = '';
@@ -125,7 +152,7 @@ export default function CaseDetailsPage() {
         }
         setEditForm({ ...data, fileDate: formattedDate });
       } else {
-        alert(result.message || 'القضية المطلوبة غير موجودة أو غير مصرح لك بمشاهدتها');
+        alert('القضية المطلوبة غير موجودة');
         navigate('/cases');
       }
     } catch (error) {
@@ -197,27 +224,104 @@ export default function CaseDetailsPage() {
   }, [caseData]);
 
   const handleTransitionStatus = async (newStatus: string) => {
-    if (!caseId) return;
+    if (!caseId || !caseData) return;
     setTransitioning(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error("لم يتم تلقيم جلسة التحقق الحالية.");
+      const activeUser = auth.currentUser;
+      if (!activeUser) throw new Error("لم يتم تلقيم جلسة التحقق الحالية.");
 
-      const response = await fetch(`/api/cases/${caseId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: newStatus })
+      const role = profile?.role || '';
+      const currentStatus = caseData.status || 'draft';
+
+      // Verify Role Permission
+      let authorizedForTransition = false;
+      if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+        authorizedForTransition = true;
+      } else if (role === 'law_firm_manager') {
+        if (currentStatus === 'external_assigned' && newStatus === 'in_court') {
+          const pLawFirmId = profile?.lawFirmId || '';
+          if (caseData.lawFirmId && caseData.lawFirmId === pLawFirmId) {
+            authorizedForTransition = true;
+          }
+        }
+      }
+
+      if (!authorizedForTransition) {
+        throw new Error('ليس لديك صلاحية لإجراء هذا الانتقال للحالة');
+      }
+
+      // State Machine transitions:
+      if (role !== 'admin') {
+        let isValidTransition = false;
+        if (currentStatus === 'draft' && newStatus === 'under_review') isValidTransition = true;
+        if (currentStatus === 'under_review' && (newStatus === 'internal' || newStatus === 'external_assigned')) isValidTransition = true;
+        if ((currentStatus === 'internal' || currentStatus === 'external_assigned') && newStatus === 'in_court') isValidTransition = true;
+        if (currentStatus === 'in_court' && newStatus === 'closed') isValidTransition = true;
+
+        if (currentStatus === newStatus) isValidTransition = true;
+
+        if (!isValidTransition) {
+          throw new Error(`انتقال غير مسموح به من حالة (${currentStatus}) إلى حالة (${newStatus}). تسلسل المراحل: مسودة ← تحت المراجعة ← داخلية/إسناد خارجي ← بالمحكمة ← مغلقة`);
+        }
+      }
+
+      // Check fields
+      if (newStatus === 'external_assigned') {
+        if (!caseData.lawFirmId) {
+          throw new Error('لا يمكن تحويل القضية لجهات خارجية دون تحديد مكتب المحاماة الشريك');
+        }
+      }
+
+      // Cannot move to in_court unless there is at least one session scheduled
+      if (newStatus === 'in_court') {
+        const globalSessionsRef = collection(db, 'case_sessions');
+        const qGlobal = query(globalSessionsRef, where('caseId', '==', caseId));
+        const globalSnap = await getDocs(qGlobal);
+
+        const subSessionsRef = collection(db, 'cases', caseId, 'sessions');
+        const subSnap = await getDocs(subSessionsRef);
+
+        const totalSessionsCount = globalSnap.size + subSnap.size;
+        if (totalSessionsCount === 0) {
+          throw new Error('لا يمكن نقل القضية للمحكمة إلا بعد تسجيل موعد جلسة واحدة على الأقل');
+        }
+      }
+
+      // Cannot move to closed unless financials are resolved
+      if (newStatus === 'closed') {
+        const plansSnapshot = await getDocs(query(collection(db, 'payment_plans'), where('caseId', '==', caseId), where('isDeleted', '==', false)));
+        let hasUnpaidInstallments = false;
+        plansSnapshot.forEach((doc) => {
+          const plan = doc.data();
+          if (plan.status !== 'paid' && plan.status !== 'partially_paid') {
+            hasUnpaidInstallments = true;
+          }
+        });
+
+        if (hasUnpaidInstallments) {
+          throw new Error('تنبيه مالي: لا يمكن إغلاق القضية قبل تحصيل أو تسوية الأقساط المجدولة والمعلقة في خطة الدفع');
+        }
+      }
+
+      // Perform update
+      const caseDocRef = doc(db, 'cases', caseId);
+      await updateDoc(caseDocRef, {
+        status: newStatus,
+        updatedAt: serverTimestamp()
       });
 
-      const result = await response.json();
-      if (result.success) {
-        await fetchCase(); // reload case details
-      } else {
-        alert("فشل تحديث المرحلة: " + result.message);
-      }
+      // Add system log event
+      await addDoc(collection(db, 'appEvents'), {
+        type: 'case_status_changed',
+        caseId,
+        oldStatus: currentStatus,
+        newStatus,
+        performedBy: activeUser.uid,
+        performedByName: profile?.fullName || profile?.name || 'مستخدم',
+        timestamp: serverTimestamp()
+      });
+
+      await fetchCase(); // reload case
     } catch (err: any) {
       alert("خطأ أثناء تحديث حالة المرحلة: " + err.message);
     } finally {
@@ -229,30 +333,20 @@ export default function CaseDetailsPage() {
     if (!caseId) return;
     setSubmittingAssignment(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error("لم يتم تلقيم كود تحقيق الهوية.");
+      const activeUser = auth.currentUser;
+      if (!activeUser) throw new Error("لم يتم تلقيم كود تحقيق الهوية.");
 
-      const response = await fetch(`/api/cases/${caseId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          assignmentType: assignForm.assignmentType,
-          lawFirmId: assignForm.lawFirmId || null,
-          assignedAssistantId: assignForm.assignedAssistantId || null,
-          salesEmployeeId: assignForm.salesEmployeeId || null
-        })
+      const caseDocRef = doc(db, 'cases', caseId);
+      await updateDoc(caseDocRef, {
+        assignmentType: assignForm.assignmentType,
+        lawFirmId: assignForm.lawFirmId || null,
+        assignedAssistantId: assignForm.assignedAssistantId || null,
+        salesEmployeeId: assignForm.salesEmployeeId || null,
+        updatedAt: serverTimestamp()
       });
 
-      const result = await response.json();
-      if (result.success) {
-        alert("تم تحديث أسماء وبيانات الإسناد بنجاح! 🎉");
-        await fetchCase();
-      } else {
-        alert("فشل التحديث: " + result.message);
-      }
+      alert("تم تحديث أسماء وبيانات الإسناد بنجاح! 🎉");
+      await fetchCase();
     } catch (error: any) {
       alert("خطأ: " + error.message);
     } finally {
@@ -370,30 +464,16 @@ export default function CaseDetailsPage() {
 
       const payload = {
         ...editForm,
+        fileDate: editForm.fileDate ? Timestamp.fromDate(new Date(editForm.fileDate)) : null,
         claimAmount: claim,
         receivedAmount: received,
         remainingAmount: remaining,
         statusLabel: selectedStatus?.label || editForm.statusLabel,
+        updatedAt: serverTimestamp()
       };
 
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) {
-        throw new Error('لم يتم العثور على صلاحية الجلسة الحالية');
-      }
-
-      const response = await fetch(`/api/cases/${caseId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-      if (!result.success) {
-        throw new Error(result.message || 'فشل تعديل القضية عبر الخادم');
-      }
+      const caseDocRef = doc(db, 'cases', caseId);
+      await updateDoc(caseDocRef, payload);
       
       // Log event if status changed
       if (caseData.status !== editForm.status) {
@@ -415,7 +495,7 @@ export default function CaseDetailsPage() {
       }
 
       setIsEditModalOpen(false);
-      fetchCase();
+      await fetchCase();
     } catch (error: any) {
       alert(`خطأ في التحديث: ${error.message}`);
     } finally {
