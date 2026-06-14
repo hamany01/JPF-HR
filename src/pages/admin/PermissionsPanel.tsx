@@ -35,7 +35,7 @@ export default function PermissionsPanel() {
   } = usePermissionsStore();
 
   // الحالة المحلية للتحكم وتتبع التعديلات (Draft)
-  const [selectedRole, setSelectedRole] = useState<UserRole>('employee');
+  const [selectedRole, setSelectedRole] = useState<UserRole>('sales_employee');
   const [fieldsDraft, setFieldsDraft] = useState<RolePermissions['fields'] | null>(null);
   const [actionsDraft, setActionsDraft] = useState<RolePermissions['actions'] | null>(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -59,8 +59,10 @@ export default function PermissionsPanel() {
     
     const rolePermissions = permissions[selectedRole] || DEFAULT_ROLE_PERMISSIONS[selectedRole];
     
-    setFieldsDraft({ ...rolePermissions.fields });
-    setActionsDraft({ ...rolePermissions.actions });
+    if (rolePermissions) {
+      setFieldsDraft({ ...rolePermissions.fields });
+      setActionsDraft({ ...rolePermissions.actions });
+    }
     setIsDirty(false);
   }, [selectedRole, permissions]);
 
@@ -166,9 +168,28 @@ export default function PermissionsPanel() {
   };
 
   const currentRoleRawValue = permissions?.[selectedRole] || DEFAULT_ROLE_PERMISSIONS[selectedRole];
-  const lastUpdatedText = currentRoleRawValue?.updatedAt
-    ? new Date(currentRoleRawValue.updatedAt.toDate()).toLocaleString('ar-EG', { hour12: true })
-    : 'غير متوفر (افتراضي)';
+  
+  let formattedDate = 'غير متوفر (افتراضي)';
+  if (currentRoleRawValue?.updatedAt) {
+    const ts = currentRoleRawValue.updatedAt;
+    let d: Date | null = null;
+    if (typeof ts.toDate === 'function') {
+      d = ts.toDate();
+    } else if (typeof ts.seconds === 'number') {
+      d = new Date(ts.seconds * 1000);
+    } else if (typeof ts._seconds === 'number') {
+      d = new Date(ts._seconds * 1000);
+    } else {
+      const parsed = new Date(ts);
+      if (!isNaN(parsed.getTime())) {
+        d = parsed;
+      }
+    }
+    if (d) {
+      formattedDate = d.toLocaleString('ar-EG', { hour12: true });
+    }
+  }
+  const lastUpdatedText = formattedDate;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20" dir="rtl">

@@ -14,7 +14,13 @@ service cloud.firestore {
 
     function hasRole(roles) {
       let data = getUserData();
-      return isSignedIn() && data != null && data.role in roles;
+      return isSignedIn() && data != null && (
+        data.role in roles ||
+        (data.role == 'law_manager' && 'law_firm_manager' in roles) ||
+        (data.role == 'law_assistant' && 'law_firm_assistant' in roles) ||
+        (data.role == 'company_assistant' && 'assistant_manager' in roles) ||
+        (data.role == 'employee' && 'sales_employee' in roles)
+      );
     }
 
     function isAdmin() {

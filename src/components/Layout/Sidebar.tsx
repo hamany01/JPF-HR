@@ -8,7 +8,8 @@ import {
   FileText, 
   Bell,
   Shield,
-  Info
+  Info,
+  Trash2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import JpfLogo from './JpfLogo';
@@ -16,6 +17,7 @@ import { APP_VERSION } from '../../config/version';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { useAuth } from '../../hooks/useAuth';
+import { useTheme } from '../../context/ThemeContext';
 
 interface SidebarProps {
   isSidebarCollapsed: boolean;
@@ -32,6 +34,7 @@ export default function Sidebar({
 }: SidebarProps) {
   const location = useLocation();
   const { user } = useAuth();
+  const { theme } = useTheme();
 
   const [pendingRequestsCount, setPendingRequestsCount] = useState<number>(0);
   const [activeCasesCount, setActiveCasesCount] = useState<number>(0);
@@ -105,6 +108,7 @@ export default function Sidebar({
     { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
     { icon: FileText, label: 'Requests', path: '/requests' },
     { icon: FileText, label: 'Cases', path: '/cases' },
+    { icon: Trash2, label: 'Recycle Bin', path: '/recycle-bin', adminOnly: true },
     { icon: Settings, label: 'Execution Settings', path: '/settings/execution', adminOnly: true },
     { icon: Bell, label: 'Notification Settings', path: '/settings/notifications', adminOnly: true },
     { icon: Shield, label: 'Permissions Settings', path: '/admin/permissions', adminOnly: true },
@@ -132,6 +136,7 @@ export default function Sidebar({
       'Dashboard': 'لوحة التحكم',
       'Requests': 'الطلبات والعملاء',
       'Cases': 'إدارة القضايا',
+      'Recycle Bin': 'سلة المحذوفات',
       'Execution Settings': 'إعدادات التنفيذ',
       'Notification Settings': 'إعدادات الإشعارات',
       'Permissions Settings': 'صلاحيات الأدوار',
@@ -143,18 +148,35 @@ export default function Sidebar({
 
   return (
     <aside className={cn(
-      "bg-slate-900 flex flex-col border-l border-slate-800 hidden md:flex transition-all duration-300 ease-in-out shrink-0",
+      theme === 'glass'
+        ? "glass-sidebar bg-white/70 backdrop-blur-xl border-l border-white/60 text-slate-800"
+        : "bg-slate-900 border-l border-slate-800 text-slate-100",
+      "flex flex-col hidden md:flex transition-all duration-300 ease-in-out shrink-0",
       isSidebarCollapsed ? "w-20" : "w-68"
     )}>
       {/* قسم اللوقو والهوية التجارية */}
-      <div className="p-6 border-b border-slate-800/60">
+      <div className={cn(
+        "p-6",
+        theme === 'glass' ? "border-b border-indigo-100/30" : "border-b border-slate-800/60"
+      )}>
         <div className="flex flex-col items-center gap-3">
           <JpfLogo className={cn("transition-all duration-300", isSidebarCollapsed ? "h-6" : "h-16 max-h-16 object-contain")} />
           {!isSidebarCollapsed && (
             <div className="text-center mt-1 animate-fadeIn">
-              <h1 className="text-sm font-black text-white tracking-wide bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">نظام الشؤون القانونية</h1>
-              <span className="text-[10px] font-bold text-slate-400 block mt-1 leading-relaxed">شركة مصنع جدة للدهانات و المعاجيين</span>
-              <span className="text-[10px] font-bold text-slate-500 bg-slate-800/60 px-2 py-0.5 rounded-full mt-2 inline-block">الإصدار v{APP_VERSION.full}</span>
+              <h1 className={cn(
+                "text-sm font-black tracking-wide",
+                theme === 'glass'
+                  ? "bg-gradient-to-r from-indigo-600 to-fuchsia-600 bg-clip-text text-transparent"
+                  : "bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent"
+              )}>नظام الشؤون القانونية</h1>
+              <span className={cn(
+                "text-[10px] font-bold block mt-1 leading-relaxed",
+                theme === 'glass' ? "text-slate-550" : "text-slate-400"
+              )}>شركة مصنع جدة للدهانات و المعاجيين</span>
+              <span className={cn(
+                "text-[10px] font-bold px-2 py-0.5 rounded-full mt-2 inline-block",
+                theme === 'glass' ? "text-indigo-600 bg-indigo-50" : "text-slate-500 bg-slate-800/60"
+              )}>الإصدار v{APP_VERSION.full}</span>
             </div>
           )}
         </div>
@@ -180,12 +202,21 @@ export default function Sidebar({
               className={cn(
                 "flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 text-sm font-bold group relative",
                 isActive 
-                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/40" 
-                  : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/80",
+                  ? (theme === 'glass' 
+                      ? "bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-md shadow-indigo-500/25" 
+                      : "bg-indigo-600 text-white shadow-lg shadow-indigo-900/40")
+                  : (theme === 'glass'
+                      ? "text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50"
+                      : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/80"),
                 isSidebarCollapsed ? "justify-center px-2" : ""
               )}
             >
-              <item.icon size={20} className={cn("shrink-0 transition-transform duration-300 group-hover:scale-110", isActive ? "text-white" : "text-slate-400 group-hover:text-indigo-400")} />
+              <item.icon size={20} className={cn(
+                "shrink-0 transition-transform duration-300 group-hover:scale-110", 
+                isActive 
+                  ? "text-white" 
+                  : (theme === 'glass' ? "text-slate-450 group-hover:text-indigo-600" : "text-slate-400 group-hover:text-indigo-400")
+              )} />
               
               {!isSidebarCollapsed && (
                 <span className="truncate whitespace-nowrap flex-1 text-right">{labelText}</span>
@@ -204,7 +235,8 @@ export default function Sidebar({
               {/* Badge for Collapsed Sidebar */}
               {isSidebarCollapsed && badgeValue > 0 && (
                 <span className={cn(
-                  "absolute top-2 left-6 min-w-4 h-4 text-[9px] font-black flex items-center justify-center rounded-full px-1 border border-slate-900 shadow-md",
+                  "absolute top-2 left-6 min-w-4 h-4 text-[9px] font-black flex items-center justify-center rounded-full px-1 border shadow-md",
+                  theme === 'glass' ? "border-white bg-indigo-600 text-white" : "border-slate-900 bg-indigo-600 text-white",
                   badgeColor
                 )}>
                   {badgeValue > 99 ? '99+' : badgeValue}
@@ -212,7 +244,10 @@ export default function Sidebar({
               )}
 
               {isActive && !isSidebarCollapsed && (
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-indigo-400 rounded-l-full"></div>
+                <div className={cn(
+                  "absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 rounded-l-full",
+                  theme === 'glass' ? "bg-indigo-600" : "bg-indigo-400"
+                )}></div>
               )}
             </Link>
           );
@@ -220,20 +255,37 @@ export default function Sidebar({
       </nav>
 
       {/* الحالة السفلية وتسجيل الخروج */}
-      <div className="p-4 border-t border-slate-800/60 bg-slate-950/40 space-y-3">
+      <div className={cn(
+        "p-4 space-y-3",
+        theme === 'glass' ? "border-t border-indigo-100/30 bg-white/40" : "border-t border-slate-800/60 bg-slate-950/40"
+      )}>
         {!isSidebarCollapsed && (
-          <div className="bg-slate-800/40 rounded-xl p-3 text-right border border-slate-800/50">
+          <div className={cn(
+            "rounded-xl p-3 text-right border animate-fadeIn",
+            theme === 'glass' 
+              ? "bg-indigo-50/30 border-indigo-100/30" 
+              : "bg-slate-800/40 border-slate-800/50"
+          )}>
             <div className="flex items-center gap-2 mb-1.5">
               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></div>
-              <span className="text-[10px] text-emerald-400 font-extrabold uppercase tracking-wider">قاعدة البيانات متصلة</span>
+              <span className={cn(
+                "text-[10px] font-extrabold uppercase tracking-wider",
+                theme === 'glass' ? "text-emerald-600" : "text-emerald-400"
+              )}>قاعدة البيانات متصلة</span>
             </div>
-            <p className="text-[10px] text-slate-500 font-mono truncate">{profileEmail}</p>
+            <p className={cn(
+              "text-[10px] font-mono truncate",
+              theme === 'glass' ? "text-slate-500" : "text-slate-500"
+            )}>{profileEmail}</p>
           </div>
         )}
         
         {/* نظام ترقيم الإصدارات في أسفل Sidebar */}
-        <div className="text-[10px] text-slate-500 text-center select-none font-mono font-bold pt-1 border-t border-slate-800/40">
-          <span className="hover:text-indigo-400 transition-colors">JPF-HR v{APP_VERSION.full}</span>
+        <div className={cn(
+          "text-[10px] text-center select-none font-mono font-bold pt-1 border-t",
+          theme === 'glass' ? "text-slate-400 border-indigo-100/30" : "text-slate-500 border-slate-800/40"
+        )}>
+          <span className={theme === 'glass' ? "hover:text-indigo-600 transition-colors" : "hover:text-indigo-400 transition-colors"}>JPF-HR v{APP_VERSION.full}</span>
           {!isSidebarCollapsed && <span className="block text-[9px] opacity-75 mt-0.5">{APP_VERSION.lastUpdated}</span>}
         </div>
         
@@ -241,7 +293,10 @@ export default function Sidebar({
           onClick={handleLogout}
           title="تسجيل الخروج"
           className={cn(
-            "w-full flex items-center gap-3 px-4 py-3.5 text-sm font-bold text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 rounded-xl transition-all duration-300 cursor-pointer",
+            "w-full flex items-center gap-3 px-4 py-3.5 text-sm font-bold rounded-xl transition-all duration-300 cursor-pointer",
+            theme === 'glass'
+              ? "text-rose-600 hover:bg-rose-50"
+              : "text-rose-400 hover:bg-rose-500/10 hover:text-rose-300",
             isSidebarCollapsed ? "justify-center px-2" : ""
           )}
         >

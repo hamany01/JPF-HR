@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { useTheme } from '../context/ThemeContext';
 import { db, auth } from '../firebase/config';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { 
@@ -22,12 +23,15 @@ import {
   X, 
   Loader2, 
   AlertCircle,
-  KeyRound
+  KeyRound,
+  Palette,
+  Sparkles
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export default function ProfilePage() {
   const { user, profile } = useAuth();
+  const { theme, setTheme, isApplying: themeApplying } = useTheme();
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,12 +63,16 @@ export default function ProfilePage() {
   }, [profile, isEditing]);
 
   const roleTranslations: Record<string, string> = {
-    'admin': 'مدير النظام',
+    'admin': 'مدير النظام الشامل',
     'company_manager': 'مدير الشركة',
-    'assistant_manager': 'مساعد الشركة',
+    'assistant_manager': 'مساعد مدير الشركة',
     'sales_employee': 'موظف مبيعات',
-    'law_firm_manager': 'مدير المكتب القانوني',
-    'law_firm_assistant': 'مساعد قانوني',
+    'law_firm_manager': 'مدير مكتب المحاماة',
+    'law_firm_assistant': 'محامي مساعد خارجي',
+    'law_manager': 'مدير المكتب القانوني',
+    'law_assistant': 'مساعد قانوني',
+    'company_assistant': 'مساعد الشركة',
+    'employee': 'موظف عادي'
   };
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
@@ -173,7 +181,9 @@ export default function ProfilePage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Profile Sidebar */}
         <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white border border-slate-200 rounded-[2.5rem] p-8 text-center shadow-sm">
+          <div className={cn(
+            theme === 'glass' ? "glass-card rounded-[2.5rem] p-8 text-center" : "bg-white border border-slate-200 rounded-[2.5rem] p-8 text-center shadow-sm"
+          )}>
             <div className="relative inline-block mb-6">
               <div className="w-24 h-24 bg-indigo-50 border-4 border-white shadow-xl shadow-indigo-100 rounded-[2rem] flex items-center justify-center overflow-hidden">
                 <User size={40} className="text-indigo-600" />
@@ -221,7 +231,9 @@ export default function ProfilePage() {
         {/* Main Content Areas */}
         <div className="lg:col-span-2 space-y-8">
           {/* Detailed Info Card */}
-          <div className="bg-white border border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden">
+          <div className={cn(
+            theme === 'glass' ? "glass-card rounded-[2.5rem] overflow-hidden" : "bg-white border border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden"
+          )}>
             <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-white rounded-xl shadow-sm">
@@ -338,8 +350,96 @@ export default function ProfilePage() {
             </div>
           </div>
 
+          {/* Theme Settings Card */}
+          <div className={cn(
+            theme === 'glass' ? "glass-card rounded-[2.5rem] overflow-hidden" : "bg-white border border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden"
+          )}>
+            <div className="px-8 py-6 border-b border-slate-100 bg-slate-50/30">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white rounded-xl shadow-sm">
+                  <Palette size={20} className="text-indigo-600" />
+                </div>
+                <h3 className="font-bold text-slate-900">إعدادات مظهر الواجهة والنظام</h3>
+              </div>
+            </div>
+
+            <div className="p-8">
+              <p className="text-xs text-slate-500 mb-6 leading-relaxed">
+                خصّص بيئة عملك باختيار السمة المفضلة لديك. يتم حفظ التغييرات على حسابك تلقائيًا لملاءمة إبحارك ومظهر نوافذك.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Classic Theme Button */}
+                <button
+                  type="button"
+                  onClick={() => setTheme('classic')}
+                  disabled={themeApplying}
+                  className={cn(
+                    "relative flex flex-col items-start p-6 rounded-[2rem] border-2 text-right transition-all group cursor-pointer w-full",
+                    theme === 'classic'
+                      ? "border-indigo-600 bg-indigo-50/30"
+                      : "border-slate-100 bg-slate-50/50 hover:border-slate-200 hover:bg-slate-50"
+                  )}
+                >
+                  <div className="flex items-center justify-between w-full mb-3">
+                    <span className="text-xs font-black text-slate-400 uppercase tracking-widest">المظهر الافتراضي</span>
+                    <div className={cn(
+                      "w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
+                      theme === 'classic' ? "border-indigo-600 bg-indigo-600" : "border-slate-300"
+                    )}>
+                      {theme === 'classic' && <span className="w-2 h-2 rounded-full bg-white" />}
+                    </div>
+                  </div>
+                  <h4 className="text-sm font-extrabold text-slate-900 mb-2">ثيم كلاسيكي وقور (Classic)</h4>
+                  <p className="text-[11px] text-slate-500 leading-normal">
+                    نسق رسمي وعملي يعتمد على مظهر مألوف ومستقر وخلفية بيضاء صقيلة للعمل الكلاسيكي المركز.
+                  </p>
+                </button>
+
+                {/* Glass Theme Button */}
+                <button
+                  type="button"
+                  onClick={() => setTheme('glass')}
+                  disabled={themeApplying}
+                  className={cn(
+                    "relative flex flex-col items-start p-6 rounded-[2rem] border-2 text-right transition-all group cursor-pointer w-full",
+                    theme === 'glass'
+                      ? "border-indigo-600 bg-indigo-50/30"
+                      : "border-slate-100 bg-slate-50/50 hover:border-slate-200 hover:bg-slate-50"
+                  )}
+                >
+                  <div className="flex items-center justify-between w-full mb-3">
+                    <span className="text-xs font-black text-indigo-500 uppercase tracking-widest flex items-center gap-1">
+                      <Sparkles size={12} className="text-indigo-500 fill-indigo-100" />
+                      موصى به
+                    </span>
+                    <div className={cn(
+                      "w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
+                      theme === 'glass' ? "border-indigo-600 bg-indigo-600" : "border-slate-300"
+                    )}>
+                      {theme === 'glass' && <span className="w-2 h-2 rounded-full bg-white" />}
+                    </div>
+                  </div>
+                  <h4 className="text-sm font-extrabold text-indigo-700 mb-2">ثيم متدرج زجاجي (Glass Gradient)</h4>
+                  <p className="text-[11px] text-slate-500 leading-normal">
+                    تأثير زجاجي شفاف وخفيف وخلفيات مائية متموجة تساند أرقى ملمح تصميمي فسيح وعصري.
+                  </p>
+                </button>
+              </div>
+
+              {themeApplying && (
+                <div className="mt-4 flex items-center gap-2 justify-center text-xs font-bold text-indigo-600 animate-pulse">
+                  <Loader2 size={14} className="animate-spin" />
+                  جاري حفظ تفضيل مظهرك المختار بأمان...
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Change Password Card */}
-          <div className="bg-white border border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden">
+          <div className={cn(
+            theme === 'glass' ? "glass-card rounded-[2.5rem] overflow-hidden" : "bg-white border border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden"
+          )}>
             <div className="px-8 py-6 border-b border-slate-100 bg-slate-50/30">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-white rounded-xl shadow-sm">

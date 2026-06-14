@@ -126,6 +126,86 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
       assignEmployee: false,
     },
   },
+  law_manager: {
+    role: 'law_manager',
+    label: 'المحامي العام (مدير الشؤون القانونية)',
+    fields: {
+      serialNumber: 'full',
+      clientName: 'full',
+      nationalId: 'full',
+      financialAmounts: 'full',
+      attachments: 'full',
+      sessionsInfo: 'full',
+    },
+    actions: {
+      createRequest: true,
+      editRequest: true,
+      deleteRequest: false,
+      addNote: true,
+      deleteNote: true,
+      assignEmployee: true,
+    },
+  },
+  law_assistant: {
+    role: 'law_assistant',
+    label: 'مساعد الشؤون القانونية',
+    fields: {
+      serialNumber: 'full',
+      clientName: 'full',
+      nationalId: 'masked',
+      financialAmounts: 'full',
+      attachments: 'full',
+      sessionsInfo: 'full',
+    },
+    actions: {
+      createRequest: false,
+      editRequest: true,
+      deleteRequest: false,
+      addNote: true,
+      deleteNote: false,
+      assignEmployee: false,
+    },
+  },
+  company_assistant: {
+    role: 'company_assistant',
+    label: 'مساعد الشركة',
+    fields: {
+      serialNumber: 'full',
+      clientName: 'full',
+      nationalId: 'masked',
+      financialAmounts: 'full',
+      attachments: 'full',
+      sessionsInfo: 'full',
+    },
+    actions: {
+      createRequest: true,
+      editRequest: true,
+      deleteRequest: false,
+      addNote: true,
+      deleteNote: false,
+      assignEmployee: true,
+    },
+  },
+  employee: {
+    role: 'employee',
+    label: 'موظف (صلاحيات محدودة)',
+    fields: {
+      serialNumber: 'full',
+      clientName: 'full',
+      nationalId: 'masked',
+      financialAmounts: 'hidden',
+      attachments: 'full',
+      sessionsInfo: 'full',
+    },
+    actions: {
+      createRequest: false,
+      editRequest: false,
+      deleteRequest: false,
+      addNote: true,
+      deleteNote: false,
+      assignEmployee: false,
+    },
+  },
 };
 
 interface PermissionsState {
@@ -157,6 +237,9 @@ const getCachedPermissions = (): Record<UserRole, RolePermissions> | null => {
   return null;
 };
 
+let unsubscribeRef: (() => void) | null = null;
+let listenerCount = 0;
+
 export const usePermissionsStore = create<PermissionsState>((set, get) => ({
   permissions: getCachedPermissions() || DEFAULT_ROLE_PERMISSIONS,
   loading: true,
@@ -165,8 +248,22 @@ export const usePermissionsStore = create<PermissionsState>((set, get) => ({
   /**
    * دالة تأسيس المستمع اللحظي (onSnapshot) مع Firestore لضمان تحديث الصلاحيات
    * فوراً للمستخدمين النشطين دون الحاجة لتحديث الصفحة.
+   * تم تحسينها بنظام عد المراجع (Reference Counting) لمنع التكرار وحلقات إعادة الرندرة المتكررة.
    */
   initStoreListener: () => {
+    listenerCount++;
+
+    if (unsubscribeRef) {
+      // إذا كان هناك مستمع نشط بالفعل، لا نكرره ولا نغير حالة التحميل لعدم حدوث وميض ورندرة متكررة
+      return () => {
+        listenerCount--;
+        if (listenerCount <= 0 && unsubscribeRef) {
+          unsubscribeRef();
+          unsubscribeRef = null;
+        }
+      };
+    }
+
     set({ loading: true });
     
     const unsubscribe = onSnapshot(
@@ -195,7 +292,15 @@ export const usePermissionsStore = create<PermissionsState>((set, get) => ({
       }
     );
 
-    return unsubscribe;
+    unsubscribeRef = unsubscribe;
+
+    return () => {
+      listenerCount--;
+      if (listenerCount <= 0 && unsubscribeRef) {
+        unsubscribeRef();
+        unsubscribeRef = null;
+      }
+    };
   },
 
   /**

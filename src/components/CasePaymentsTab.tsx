@@ -196,6 +196,37 @@ export default function CasePaymentsTab({
     }
   };
 
+  const handleDeletePaymentPlan = async (planId: string) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذا القسط بشكل مؤقت؟ سيتم نقله إلى سلة المحذوفات.')) {
+      return;
+    }
+    try {
+      const activeUser = auth.currentUser;
+      if (!activeUser) return;
+      const token = await activeUser.getIdToken();
+      if (!token) {
+        alert('لم يتم العثور على توثيق مستخدم سارٍ.');
+        return;
+      }
+      const response = await fetch(`/api/payment-plans/${planId}/delete`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const result = await response.json();
+      if (result.success) {
+        alert('تم نقل القسط إلى سلة المحذوفات بنجاح!');
+        await fetchPaymentPlans();
+        onRefresh();
+      } else {
+        alert(`فشل الحذف: ${result.message}`);
+      }
+    } catch (error: any) {
+      alert("حدث خطأ أثناء نقل القسط لسلة المحذوفات: " + error.message);
+    }
+  };
+
   const getWhatsAppLink = (plan: any) => {
     const phone = caseInfo?.defendantPhone || '';
     let cleaned = phone.trim().replace(/\s+/g, '');
@@ -848,6 +879,13 @@ export default function CasePaymentsTab({
                                   إعادة للانتظار
                                 </button>
                               )}
+                              <button
+                                onClick={() => handleDeletePaymentPlan(plan.id)}
+                                className="p-1.5 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-xl transition-all shrink-0 flex items-center justify-center"
+                                title="حذف القسط"
+                              >
+                                <Trash2 size={14} />
+                              </button>
                             </div>
                           )}
 

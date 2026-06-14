@@ -6,7 +6,11 @@ export type UserRole =
   | 'assistant_manager' 
   | 'sales_employee' 
   | 'law_firm_manager' 
-  | 'law_firm_assistant';
+  | 'law_firm_assistant'
+  | 'law_manager'
+  | 'law_assistant'
+  | 'company_assistant'
+  | 'employee';
 
 export interface UserProfile {
   id: string;
@@ -20,6 +24,7 @@ export interface UserProfile {
   lawFirmId?: string;
   assignedCaseIds?: string[];
   telegramChatId?: string;
+  theme?: 'classic' | 'glass';
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

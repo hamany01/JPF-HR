@@ -4,7 +4,7 @@ import { db, auth } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, Plus, Search, Filter, Loader2, X, ChevronLeft, UploadCloud, Archive } from 'lucide-react';
+import { FileText, Plus, Search, Filter, Loader2, X, ChevronLeft, UploadCloud, Archive, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import DataImporter from '../components/DataImporter';
 import CasesDashboard from '../components/cases/CasesDashboard';
@@ -126,6 +126,17 @@ export default function CasesListPage() {
       if (filters.idType !== 'الكل') {
         docs = docs.filter((d: any) => d.idType === filters.idType);
       }
+
+      // Sort cases: Newest first (createdAt desc)
+      docs.sort((a: any, b: any) => {
+        const getMs = (val: any) => {
+          if (!val) return 0;
+          if (typeof val.toDate === 'function') return val.toDate().getTime();
+          if (val && typeof val === 'object' && 'seconds' in val) return (val.seconds as number) * 1000 + ((val.nanoseconds as number) || 0) / 1000000;
+          return new Date(val).getTime() || 0;
+        };
+        return getMs(b.createdAt) - getMs(a.createdAt);
+      });
 
       setCases(docs);
     } catch (error) {
@@ -396,6 +407,37 @@ export default function CasesListPage() {
     } catch (err) {
       console.error("Error archiving case:", err);
       alert("حدث خطأ أثناء الأرشفة");
+    }
+  };
+
+  const handleDeleteCase = async (e: React.MouseEvent, caseId: string) => {
+    e.stopPropagation();
+    if (!window.confirm('هل أنت متأكد من رغبتك في إرسال هذه القضية إلى سلة المهملات؟ لن يتم حذفها نهائياً، ويمكن استعادتها من قبل المشرف.')) {
+      return;
+    }
+    try {
+      const activeUser = auth.currentUser;
+      const token = await activeUser?.getIdToken();
+      if (!token) {
+        alert('لم يتم العثور على توثيق مستخدم سارٍ.');
+        return;
+      }
+      const response = await fetch(`/api/cases/${caseId}/delete`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const result = await response.json();
+      if (result.success) {
+        alert('تم نقل القضية إلى سلة المحذوفات بنجاح!');
+        fetchCases();
+      } else {
+        alert(`فشل الحذف: ${result.message}`);
+      }
+    } catch (err: any) {
+      console.error('Error soft deleting case:', err);
+      alert(`حدث خطأ أثناء الحذف: ${err.message}`);
     }
   };
 
@@ -685,6 +727,15 @@ export default function CasesListPage() {
                         title="أرشفة"
                       >
                         <Archive size={16} />
+                      </button>
+                    )}
+                    {['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '') && (
+                      <button
+                        onClick={(e) => handleDeleteCase(e, item.id)}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-rose-50 rounded-xl transition-all"
+                        title="حذف بالقضية"
+                      >
+                        <Trash2 size={16} />
                       </button>
                     )}
                     <ChevronLeft size={18} className="text-slate-300 group-hover:text-indigo-600 transition-colors" />

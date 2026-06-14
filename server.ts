@@ -2,6 +2,10 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
+import { AsyncLocalStorage } from 'async_hooks';
+
+// Context storage for incoming requests to share the Bearer token with getFirebaseAdmin
+export const requestContext = new AsyncLocalStorage<any>();
 
 // Catch all unhandled rejections and exceptions to print them clearly in logs
 process.on('unhandledRejection', (reason, promise) => {
@@ -14,6 +18,10 @@ process.on('uncaughtException', (err, origin) => {
 
 const app = express();
 const PORT = 3000;
+
+app.use((req, res, next) => {
+  requestContext.run(req, next);
+});
 
 app.use(express.json());
 
@@ -77,6 +85,17 @@ async function getFirebaseAdmin() {
       throw firebaseErr;
     }
   }
+
+  // Check if we have an incoming express request context in AsyncLocalStorage
+  const req = requestContext.getStore();
+  const authHeader = req?.headers?.authorization;
+  const token = (authHeader && authHeader.startsWith('Bearer ')) ? authHeader.split('Bearer ')[1] : '';
+
+  if (token) {
+    const db = createRESTDbProxy(token);
+    return { admin: adminInstance, db };
+  }
+
   return { admin: adminInstance, db: firestoreDb };
 }
 
@@ -85,7 +104,7 @@ app.post('/api/resetUserPassword', async (req, res) => {
   console.log('☁️ Received reset password request on local Express API');
   
   try {
-    const { admin, db } = await getFirebaseAdmin();
+    const { admin, db } = await getFirebaseAdminForRequest(req);
     
     // 1. Verify Authorization Bearer token (JWT ID Token)
     const authHeader = req.headers.authorization;
@@ -143,6 +162,332 @@ app.post('/api/resetUserPassword', async (req, res) => {
   }
 });
 
+// --- Firestore REST API Helpers & Proxy to bypass GCP Service Account IAM limits of Sandboxed Cloud Run ---
+
+function toFirestoreJSON(val: any): any {
+  if (val === null || val === undefined) {
+    return { nullValue: null };
+  }
+  if (typeof val === 'string') {
+    return { stringValue: val };
+  }
+  if (typeof val === 'boolean') {
+    return { booleanValue: val };
+  }
+  if (typeof val === 'number') {
+    if (Number.isInteger(val)) {
+      return { integerValue: String(val) };
+    }
+    return { doubleValue: val };
+  }
+  if (val instanceof Date) {
+    return { timestampValue: val.toISOString() };
+  }
+  if (Array.isArray(val)) {
+    return {
+      arrayValue: {
+        values: val.map(toFirestoreJSON)
+      }
+    };
+  }
+  if (typeof val === 'object') {
+    // If it is a FieldValue or serverTimestamp sentinel:
+    if (val.constructor && (val.constructor.name === 'FieldValue' || val.constructor.name === 'Sentinel')) {
+      return { timestampValue: new Date().toISOString() };
+    }
+    if ('_methodName' in val && val._methodName === 'FieldValue.serverTimestamp') {
+      return { timestampValue: new Date().toISOString() };
+    }
+    const fields: Record<string, any> = {};
+    for (const key of Object.keys(val)) {
+      fields[key] = toFirestoreJSON(val[key]);
+    }
+    return {
+      mapValue: {
+        fields
+      }
+    };
+  }
+  return { stringValue: String(val) };
+}
+
+function unwrapValue(valObj: any): any {
+  if (!valObj) return null;
+  if ('stringValue' in valObj) return valObj.stringValue;
+  if ('booleanValue' in valObj) return valObj.booleanValue;
+  if ('integerValue' in valObj) return parseInt(valObj.integerValue, 10);
+  if ('doubleValue' in valObj) return parseFloat(valObj.doubleValue);
+  if ('timestampValue' in valObj) {
+    const date = new Date(valObj.timestampValue);
+    const secs = Math.floor(date.getTime() / 1000);
+    return {
+      toDate: () => date,
+      seconds: secs,
+      nanoseconds: (date.getTime() % 1000) * 1000000,
+      _seconds: secs,
+      _nanoseconds: (date.getTime() % 1000) * 1000000
+    };
+  }
+  if ('nullValue' in valObj) return null;
+  if ('arrayValue' in valObj) {
+    const arr = valObj.arrayValue.values || [];
+    return arr.map(unwrapValue);
+  }
+  if ('mapValue' in valObj) {
+    const mapFields = valObj.mapValue.fields || {};
+    const mapRes: any = {};
+    for (const k of Object.keys(mapFields)) {
+      mapRes[k] = unwrapValue(mapFields[k]);
+    }
+    return mapRes;
+  }
+  return null;
+}
+
+function fromFirestoreJSON(fields: any): any {
+  if (!fields) return {};
+  const res: any = {};
+  for (const key of Object.keys(fields)) {
+    res[key] = unwrapValue(fields[key]);
+  }
+  return res;
+}
+
+async function fetchDocREST(token: string, colName: string, docId: string) {
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const projectId = firebaseConfig.projectId;
+  const databaseId = firebaseConfig.firestoreDatabaseId;
+
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}/${docId}`;
+  
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return { exists: false, data: () => null };
+    }
+    const errText = await response.text();
+    throw new Error(`Firestore REST error (${response.status}): ${errText}`);
+  }
+
+  const json = await response.json();
+  const fields = json.fields || {};
+  const data = fromFirestoreJSON(fields);
+
+  return {
+    exists: true,
+    id: docId,
+    data: () => data
+  };
+}
+
+async function listCollectionREST(token: string, colName: string) {
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const projectId = firebaseConfig.projectId;
+  const databaseId = firebaseConfig.firestoreDatabaseId;
+
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}?pageSize=300`;
+  
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Firestore REST error in list collection (${response.status}): ${errText}`);
+  }
+
+  const json = await response.json();
+  const documents = json.documents || [];
+
+  return {
+    docs: documents.map((doc: any) => {
+      const parts = doc.name.split('/');
+      const docId = parts[parts.length - 1];
+      const fields = doc.fields || {};
+      const data = fromFirestoreJSON(fields);
+      return {
+        id: docId,
+        exists: true,
+        data: () => data
+      };
+    })
+  };
+}
+
+async function addDocREST(token: string, colName: string, data: any) {
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const projectId = firebaseConfig.projectId;
+  const databaseId = firebaseConfig.firestoreDatabaseId;
+
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}`;
+  const payload = {
+    fields: toFirestoreJSON(data).mapValue.fields
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Firestore REST error in addDoc (${response.status}): ${errText}`);
+  }
+
+  const json = await response.json();
+  const parts = json.name.split('/');
+  const docId = parts[parts.length - 1];
+
+  return {
+    id: docId,
+    exists: true,
+    data: () => fromFirestoreJSON(json.fields || {})
+  };
+}
+
+async function updateDocREST(token: string, colName: string, docId: string, data: any) {
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const projectId = firebaseConfig.projectId;
+  const databaseId = firebaseConfig.firestoreDatabaseId;
+
+  const queryParams = Object.keys(data)
+    .map(key => `updateMask.fieldPaths=${encodeURIComponent(key)}`)
+    .join('&');
+
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}/${docId}?${queryParams}`;
+  const payload = {
+    fields: toFirestoreJSON(data).mapValue.fields
+  };
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Firestore REST error in updateDoc (${response.status}): ${errText}`);
+  }
+
+  const json = await response.json();
+  return {
+    id: docId,
+    exists: true,
+    data: () => fromFirestoreJSON(json.fields || {})
+  };
+}
+
+async function deleteDocREST(token: string, colName: string, docId: string) {
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const projectId = firebaseConfig.projectId;
+  const databaseId = firebaseConfig.firestoreDatabaseId;
+
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}/${docId}`;
+
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok && response.status !== 404) {
+    const errText = await response.text();
+    throw new Error(`Firestore REST error in deleteDoc (${response.status}): ${errText}`);
+  }
+
+  return { success: true };
+}
+
+function createRESTDbProxy(token: string) {
+  return {
+    collection: (colName: string) => {
+      return {
+        doc: (docId: string) => {
+          return {
+            get: async () => fetchDocREST(token, colName, docId),
+            update: async (data: any) => updateDocREST(token, colName, docId, data),
+            delete: async () => deleteDocREST(token, colName, docId),
+            collection: (subColName: string) => {
+              return {
+                get: async () => listCollectionREST(token, `${colName}/${docId}/${subColName}`)
+              };
+            }
+          };
+        },
+        get: async () => listCollectionREST(token, colName),
+        add: async (data: any) => addDocREST(token, colName, data),
+        where: (field: string, op: string, val: any) => {
+          return {
+            get: async () => {
+              const res = await listCollectionREST(token, colName);
+              res.docs = res.docs.filter((docObj: any) => {
+                const d = docObj.data();
+                if (!d) return false;
+                if (op === '==') {
+                  return d[field] === val;
+                }
+                if (op === '!=') {
+                  return d[field] !== val;
+                }
+                return true;
+              });
+              return res;
+            }
+          };
+        }
+      };
+    },
+    batch: () => {
+      const operations: (() => Promise<any>)[] = [];
+      return {
+        update: (docRef: any, updates: any) => {
+          operations.push(() => docRef.update(updates));
+        },
+        commit: async () => {
+          for (const op of operations) {
+            await op();
+          }
+        }
+      };
+    }
+  };
+}
+
+async function getFirebaseAdminForRequest(req: any) {
+  const { admin } = await getFirebaseAdmin();
+  const authHeader = req?.headers?.authorization;
+  const token = (authHeader && authHeader.startsWith('Bearer ')) ? authHeader.split('Bearer ')[1] : '';
+  
+  if (token) {
+    const db = createRESTDbProxy(token);
+    return { admin, db, token };
+  }
+  
+  const { db } = await getFirebaseAdmin();
+  return { admin, db, token: '' };
+}
+
 // Helper: Common Auth & Role resolution middleware/function
 async function checkAuthAndGetRole(req: any) {
   const authHeader = req.headers.authorization;
@@ -156,7 +501,7 @@ async function checkAuthAndGetRole(req: any) {
   }
 
   try {
-    const { admin, db } = await getFirebaseAdmin();
+    const { admin, db } = await getFirebaseAdminForRequest(req);
     const decodedToken = await admin.auth().verifyIdToken(token);
     const uid = decodedToken.uid;
 
@@ -170,13 +515,59 @@ async function checkAuthAndGetRole(req: any) {
       throw { status: 403, message: 'هذا الحساب غير نشط حالياً' };
     }
 
-    return { uid, role: userData.role || 'sales_employee', userData };
+    let userRole = userData.role || 'sales_employee';
+    // Normalize role names to legacy structure for compatibility with backend logic
+    if (userRole === 'law_manager') userRole = 'law_firm_manager';
+    else if (userRole === 'law_assistant') userRole = 'law_firm_assistant';
+    else if (userRole === 'company_assistant') userRole = 'assistant_manager';
+    else if (userRole === 'employee') userRole = 'sales_employee';
+
+    return { uid, role: userRole, userData };
   } catch (err: any) {
     if (err.status) throw err;
     console.error('JWT Token verification error:', err);
     throw { status: 401, message: 'توكن غير صالح أو منتهي الصلاحية' };
   }
 }
+
+// PATCH /api/users/me/theme: Update the current user's theme preference
+app.patch('/api/users/me/theme', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح: يرجى تسجيل الدخول' });
+    }
+
+    const token = authHeader.split('Bearer ')[1];
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'غير مصرح: التوكن فارغ' });
+    }
+
+    const { admin, db } = await getFirebaseAdmin();
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    const uid = decodedToken.uid;
+
+    const { theme } = req.body || {};
+    if (!theme || (theme !== 'classic' && theme !== 'glass')) {
+      return res.status(400).json({ success: false, message: 'سمة مظهر غير صالحة' });
+    }
+
+    // Try to update Firestore as best-effort in the backend
+    try {
+      await db.collection('users').doc(uid).update({
+        theme: theme,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    } catch (dbErr: any) {
+      console.warn('Backend admin Firestore update skipped/failed (gracefully handled):', dbErr.message || dbErr);
+    }
+
+    return res.json({ success: true, message: 'تم تحديث مظهر النظام والسمة بنجاح' });
+  } catch (error: any) {
+    console.error('Error in PATCH /api/users/me/theme:', error);
+    return res.status(error.status || 500).json({ success: false, message: error.message || 'حدث خطأ في تحديث مظهر النظام' });
+  }
+});
 
 // GET /api/cases: List cases with role-based visibility filtering
 app.get('/api/cases', async (req, res) => {
@@ -217,6 +608,21 @@ app.get('/api/cases', async (req, res) => {
         // Legacy document that doesn't have isDeleted field
         return isAdminRole;
       }
+    });
+
+    // Sort cases: Newest first (createdAt desc)
+    cases.sort((a: any, b: any) => {
+      const getMs = (val: any) => {
+        if (!val) return 0;
+        if (typeof val.toDate === 'function') return val.toDate().getTime();
+        if (val && typeof val === 'object' && ('_seconds' in val || 'seconds' in val)) {
+          const sec = val._seconds !== undefined ? val._seconds : val.seconds;
+          const nano = val._nanoseconds !== undefined ? val._nanoseconds : (val.nanoseconds || 0);
+          return sec * 1000 + nano / 1000000;
+        }
+        return new Date(val).getTime() || 0;
+      };
+      return getMs(b.createdAt) - getMs(a.createdAt);
     });
 
     return res.json({ success: true, count: cases.length, data: cases });
@@ -354,8 +760,14 @@ app.patch('/api/cases/:id', async (req, res) => {
       if (body.salesEmployeeId !== undefined) updates.salesEmployeeId = body.salesEmployeeId;
       if (body.isDeleted !== undefined) updates.isDeleted = !!body.isDeleted;
     } 
-    // Lawyers can only update status
-    else if (role === 'law_firm_manager' || role === 'law_firm_assistant') {
+    // Lawyers can only update status and assignedAssistantId (for managers)
+    else if (role === 'law_firm_manager') {
+      if (body.status !== undefined) updates.status = body.status;
+      if (body.assignedAssistantId !== undefined) {
+        updates.assignedAssistantId = body.assignedAssistantId || null;
+      }
+    }
+    else if (role === 'law_firm_assistant') {
       if (body.status !== undefined) updates.status = body.status;
     }
 
@@ -490,10 +902,22 @@ app.patch('/api/cases/:id/status', async (req, res) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
-    // If migrating to external and fields are supplied
-    if (req.body.lawFirmId !== undefined) updates.lawFirmId = req.body.lawFirmId;
-    if (req.body.assignedAssistantId !== undefined) updates.assignedAssistantId = req.body.assignedAssistantId;
-    if (req.body.assignmentType !== undefined) updates.assignmentType = req.body.assignmentType;
+    // If migrating to external and fields are supplied (Managers/Admins only for lawFirmId, assignmentType)
+    if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+      if (req.body.lawFirmId !== undefined) updates.lawFirmId = req.body.lawFirmId;
+      if (req.body.assignmentType !== undefined) updates.assignmentType = req.body.assignmentType;
+    }
+    // Both admins/managers and law firm managers can assign assistants for their respective roles
+    if (req.body.assignedAssistantId !== undefined) {
+      if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+        updates.assignedAssistantId = req.body.assignedAssistantId;
+      } else if (role === 'law_firm_manager') {
+        const pLawFirmId = userData.lawFirmId || '';
+        if (caseData.lawFirmId && caseData.lawFirmId === pLawFirmId) {
+          updates.assignedAssistantId = req.body.assignedAssistantId;
+        }
+      }
+    }
 
     await db.collection('cases').doc(caseId).update(updates);
 
@@ -673,6 +1097,349 @@ app.patch('/api/payment-plans/:id', async (req, res) => {
   } catch (error: any) {
     console.error('Error updating payment-plan:', error);
     return res.status(error.status || 500).json({ success: false, message: error.message || 'فشل تحديث معلومات الدفع' });
+  }
+});
+
+
+// GET /api/recycle-bin/cases: Get soft deleted cases (Admin only)
+app.get('/api/recycle-bin/cases', async (req, res) => {
+  try {
+    const { uid, role } = await checkAuthAndGetRole(req);
+    const { db } = await getFirebaseAdmin();
+
+    if (role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'هذا الإجراء مسموح به للمشرفين فقط' });
+    }
+
+    const snapshot = await db.collection('cases').where('isDeleted', '==', true).get();
+    
+    // Fetch users mapping safely
+    const usersSnapshot = await db.collection('users').get();
+    const usersMap: any = {};
+    usersSnapshot.forEach((doc: any) => {
+      const d = doc.data();
+      usersMap[doc.id] = d.fullName || d.name || 'مستخدِم';
+    });
+
+    const deletedCases = snapshot.docs.map((doc: any) => {
+      const d = doc.data();
+      return {
+        id: doc.id,
+        caseId: doc.id,
+        ...d,
+        deletedByName: d.deletedBy ? (usersMap[d.deletedBy] || 'مستخدِم غير معروف') : '—'
+      };
+    });
+
+    // Sort: Newest deleted first
+    deletedCases.sort((a: any, b: any) => {
+      const getMs = (val: any) => {
+        if (!val) return 0;
+        if (typeof val.toDate === 'function') return val.toDate().getTime();
+        if (val && typeof val === 'object' && ('_seconds' in val || 'seconds' in val)) {
+          const sec = val._seconds !== undefined ? val._seconds : val.seconds;
+          const nano = val._nanoseconds !== undefined ? val._nanoseconds : (val.nanoseconds || 0);
+          return sec * 1000 + nano / 1000000;
+        }
+        return new Date(val).getTime() || 0;
+      };
+      return getMs(b.deletedAt) - getMs(a.deletedAt);
+    });
+
+    return res.json({ success: true, count: deletedCases.length, data: deletedCases });
+  } catch (error: any) {
+    console.error('Error in GET /api/recycle-bin/cases:', error);
+    return res.status(error.status || 500).json({ success: false, message: error.message || 'حدث خطأ أثناء تحميل سلة القضايا' });
+  }
+});
+
+
+// GET /api/recycle-bin/payment-plans: Get soft deleted payment plans (Admin only)
+app.get('/api/recycle-bin/payment-plans', async (req, res) => {
+  try {
+    const { uid, role } = await checkAuthAndGetRole(req);
+    const { db } = await getFirebaseAdmin();
+
+    if (role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'هذا الإجراء مسموح به للمشرفين فقط' });
+    }
+
+    const snapshot = await db.collection('payment_plans').where('isDeleted', '==', true).get();
+    
+    // Fetch users mapping and cases mapping safely
+    const usersSnapshot = await db.collection('users').get();
+    const usersMap: any = {};
+    usersSnapshot.forEach((doc: any) => {
+      const d = doc.data();
+      usersMap[doc.id] = d.fullName || d.name || 'مستخدِم';
+    });
+
+    const casesSnapshot = await db.collection('cases').get();
+    const casesMap: any = {};
+    casesSnapshot.forEach((doc: any) => {
+      const d = doc.data();
+      casesMap[doc.id] = {
+        clientName: d.clientName || '—',
+        serialNumber: d.requestSerialNumber || d.requestNumber || '—',
+        defendantName: d.defendantName || '—'
+      };
+    });
+
+    const deletedPlans = snapshot.docs.map((doc: any) => {
+      const d = doc.data();
+      const parentCase = casesMap[d.caseId] || { clientName: 'قضية غير معروفة', serialNumber: '—', defendantName: '—' };
+      return {
+        id: doc.id,
+        planId: doc.id,
+        ...d,
+        clientName: parentCase.clientName,
+        serialNumber: parentCase.serialNumber,
+        defendantName: parentCase.defendantName,
+        deletedByName: d.deletedBy ? (usersMap[d.deletedBy] || 'مستخدِم غير معروف') : '—'
+      };
+    });
+
+    // Sort: Newest deleted first
+    deletedPlans.sort((a: any, b: any) => {
+      const getMs = (val: any) => {
+        if (!val) return 0;
+        if (typeof val.toDate === 'function') return val.toDate().getTime();
+        if (val && typeof val === 'object' && ('_seconds' in val || 'seconds' in val)) {
+          const sec = val._seconds !== undefined ? val._seconds : val.seconds;
+          const nano = val._nanoseconds !== undefined ? val._nanoseconds : (val.nanoseconds || 0);
+          return sec * 1000 + nano / 1000000;
+        }
+        return new Date(val).getTime() || 0;
+      };
+      return getMs(b.deletedAt) - getMs(a.deletedAt);
+    });
+
+    return res.json({ success: true, count: deletedPlans.length, data: deletedPlans });
+  } catch (error: any) {
+    console.error('Error in GET /api/recycle-bin/payment-plans:', error);
+    return res.status(error.status || 500).json({ success: false, message: error.message || 'حدث خطأ أثناء تحميل سلة الدفعات' });
+  }
+});
+
+
+// POST /api/cases/:id/delete: Soft delete a case
+app.post('/api/cases/:id/delete', async (req, res) => {
+  try {
+    const { uid, role, userData } = await checkAuthAndGetRole(req);
+    const { db, admin } = await getFirebaseAdmin();
+    const caseId = req.params.id;
+
+    if (role !== 'admin' && role !== 'company_manager' && role !== 'assistant_manager' && role !== 'law_firm_manager') {
+      return res.status(403).json({ success: false, message: 'غير مصرح لك بنقل القضايا لسلة المحذوفات' });
+    }
+
+    const caseDoc = await db.collection('cases').doc(caseId).get();
+    if (!caseDoc.exists) {
+      return res.status(404).json({ success: false, message: 'القضية المطلوبة غير موجودة' });
+    }
+
+    const caseData = caseDoc.data();
+
+    // Check law_firm_manager mismatch
+    if (role === 'law_firm_manager') {
+      const pLawFirmId = userData.lawFirmId || '';
+      if (!caseData.lawFirmId || caseData.lawFirmId !== pLawFirmId) {
+        return res.status(403).json({ success: false, message: 'غير مصرح لك بحذف قضايا خارج مكتب المحاماة الخاص بك' });
+      }
+    }
+
+    await db.collection('cases').doc(caseId).update({
+      isDeleted: true,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      deletedBy: uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Create system log event
+    await db.collection('appEvents').add({
+      type: 'case_soft_deleted',
+      caseId,
+      performedBy: uid,
+      performedByName: userData.fullName || userData.name || 'مستخدم',
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.json({ success: true, message: 'تم نقل القضية إلى سلة المحذوفات بنجاح' });
+  } catch (error: any) {
+    console.error('Error soft deleting case:', error);
+    return res.status(error.status || 500).json({ success: false, message: error.message || 'حدث خطأ أثناء نقل القضية لسلة المحذوفات' });
+  }
+});
+
+
+// POST /api/cases/:id/restore: Restore a soft deleted case
+app.post('/api/cases/:id/restore', async (req, res) => {
+  try {
+    const { uid, role, userData } = await checkAuthAndGetRole(req);
+    const { db, admin } = await getFirebaseAdmin();
+    const caseId = req.params.id;
+
+    if (role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'هذا الإجراء مسموح به للمشرفين فقط' });
+    }
+
+    const caseDoc = await db.collection('cases').doc(caseId).get();
+    if (!caseDoc.exists) {
+      return res.status(404).json({ success: false, message: 'القضية المطلوبة غير موجودة' });
+    }
+
+    await db.collection('cases').doc(caseId).update({
+      isDeleted: false,
+      deletedAt: null,
+      deletedBy: null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Create system log event
+    await db.collection('appEvents').add({
+      type: 'case_restored',
+      caseId,
+      performedBy: uid,
+      performedByName: userData.fullName || userData.name || 'مشرف',
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.json({ success: true, message: 'تم استرجاع القضية بنجاح' });
+  } catch (error: any) {
+    console.error('Error restoring case:', error);
+    return res.status(error.status || 500).json({ success: false, message: error.message || 'حدث خطأ أثناء استرجاع القضية' });
+  }
+});
+
+
+// DELETE /api/cases/:id/hard-delete: Permanently delete a case and its payment plans
+app.delete('/api/cases/:id/hard-delete', async (req, res) => {
+  try {
+    const { uid, role, userData } = await checkAuthAndGetRole(req);
+    const { db, admin } = await getFirebaseAdmin();
+    const caseId = req.params.id;
+
+    if (role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'هذا الإجراء مسموح به للمشرفين فقط' });
+    }
+
+    const caseDoc = await db.collection('cases').doc(caseId).get();
+    if (!caseDoc.exists) {
+      return res.status(404).json({ success: false, message: 'القضية المطلوبة غير موجودة' });
+    }
+
+    // Delete case
+    await db.collection('cases').doc(caseId).delete();
+
+    // Delete associated payment plans
+    const plansSnapshot = await db.collection('payment_plans').where('caseId', '==', caseId).get();
+    const batch = db.batch();
+    plansSnapshot.docs.forEach((doc: any) => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+
+    // Create system log event
+    await db.collection('appEvents').add({
+      type: 'case_hard_deleted',
+      caseId,
+      performedBy: uid,
+      performedByName: userData.fullName || userData.name || 'مشرف',
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.json({ success: true, message: 'تم حذف القضية وجميع الدفعات المرتبطة بها نهائياً' });
+  } catch (error: any) {
+    console.error('Error hard deleting case:', error);
+    return res.status(error.status || 500).json({ success: false, message: error.message || 'حدث خطأ أثناء الحذف النهائي للقضية' });
+  }
+});
+
+
+// POST /api/payment-plans/:id/delete: Soft delete a payment plan
+app.post('/api/payment-plans/:id/delete', async (req, res) => {
+  try {
+    const { uid, role, userData } = await checkAuthAndGetRole(req);
+    const { db, admin } = await getFirebaseAdmin();
+    const planId = req.params.id;
+
+    if (role !== 'admin' && role !== 'company_manager' && role !== 'assistant_manager') {
+      return res.status(403).json({ success: false, message: 'غير مصرح لك بنقل الدفعات لسلة المحذوفات' });
+    }
+
+    const planDoc = await db.collection('payment_plans').doc(planId).get();
+    if (!planDoc.exists) {
+      return res.status(404).json({ success: false, message: 'القسط أو الدفعة غير موجودة' });
+    }
+
+    await db.collection('payment_plans').doc(planId).update({
+      isDeleted: true,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      deletedBy: uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.json({ success: true, message: 'تم نقل الدفعة إلى سلة المحذوفات بنجاح' });
+  } catch (error: any) {
+    console.error('Error soft deleting payment plan:', error);
+    return res.status(error.status || 500).json({ success: false, message: error.message || 'حدث خطأ أثناء نقل القسط لسلة المحذوفات' });
+  }
+});
+
+
+// POST /api/payment-plans/:id/restore: Restore a soft deleted payment plan
+app.post('/api/payment-plans/:id/restore', async (req, res) => {
+  try {
+    const { uid, role } = await checkAuthAndGetRole(req);
+    const { db, admin } = await getFirebaseAdmin();
+    const planId = req.params.id;
+
+    if (role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'هذا الإجراء مسموح به للمشرفين فقط' });
+    }
+
+    const planDoc = await db.collection('payment_plans').doc(planId).get();
+    if (!planDoc.exists) {
+      return res.status(404).json({ success: false, message: 'المستند المطلوب غير موجود' });
+    }
+
+    await db.collection('payment_plans').doc(planId).update({
+      isDeleted: false,
+      deletedAt: null,
+      deletedBy: null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return res.json({ success: true, message: 'تم استرجاع الدفعة بنجاح' });
+  } catch (error: any) {
+    console.error('Error restoring payment plan:', error);
+    return res.status(error.status || 500).json({ success: false, message: error.message || 'حدث خطأ أثناء استرجاع الدفعة' });
+  }
+});
+
+
+// DELETE /api/payment-plans/:id/hard-delete: Permanently delete a payment plan
+app.delete('/api/payment-plans/:id/hard-delete', async (req, res) => {
+  try {
+    const { uid, role } = await checkAuthAndGetRole(req);
+    const { db } = await getFirebaseAdmin();
+    const planId = req.params.id;
+
+    if (role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'هذا الإجراء مسموح به للمشرفين فقط' });
+    }
+
+    const planDoc = await db.collection('payment_plans').doc(planId).get();
+    if (!planDoc.exists) {
+      return res.status(404).json({ success: false, message: 'المستند غير موجود' });
+    }
+
+    await db.collection('payment_plans').doc(planId).delete();
+
+    return res.json({ success: true, message: 'تم حذف الدفعة نهائياً' });
+  } catch (error: any) {
+    console.error('Error hard deleting payment plan:', error);
+    return res.status(error.status || 500).json({ success: false, message: error.message || 'حدث خطأ أثناء الحذف النهائي للدفعة' });
   }
 });
 

@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './hooks/useAuth';
+import { ThemeProvider } from './context/ThemeContext';
 import { ProtectedRoute, AdminRoute } from './components/ProtectedRoute';
 import MainLayout from './components/MainLayout';
 import LoginPage from './pages/LoginPage';
@@ -24,22 +25,23 @@ export default function App() {
   return (
     <Router>
       <AuthProvider>
-        <Toaster 
-          position="top-center"
-          reverseOrder={false}
-          gutter={8}
-          toastOptions={{
-            duration: 5000,
-            style: {
-              background: '#fff',
-              color: '#363636',
-              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
-              borderRadius: '1rem',
-              padding: '10px 16px',
-            },
-          }}
-        />
-        <Routes>
+        <ThemeProvider>
+          <Toaster 
+            position="top-center"
+            reverseOrder={false}
+            gutter={8}
+            toastOptions={{
+              duration: 5000,
+              style: {
+                background: '#fff',
+                color: '#363636',
+                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                borderRadius: '1rem',
+                padding: '10px 16px',
+              },
+            }}
+          />
+          <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/not-authorized" element={<NotAuthorizedPage />} />
           
@@ -56,7 +58,7 @@ export default function App() {
           </Route>
 
           {/* Cases & Legal Management Protected Routes with Specific Roles */}
-          <Route element={<ProtectedRoute allowedRoles={['admin', 'company_manager', 'assistant_manager', 'sales_employee', 'law_firm_manager', 'law_firm_assistant']} />}>
+          <Route element={<ProtectedRoute allowedRoles={['admin', 'company_manager', 'assistant_manager', 'sales_employee', 'law_firm_manager', 'law_firm_assistant', 'law_manager', 'law_assistant', 'company_assistant', 'employee']} />}>
             <Route element={<MainLayout />}>
               <Route path="/cases" element={<CasesListPage />} />
               <Route path="/cases/:caseId" element={<CaseDetailsPage />} />
@@ -64,7 +66,7 @@ export default function App() {
           </Route>
 
           {/* Recycle Bin accessible by managers */}
-          <Route element={<ProtectedRoute allowedRoles={['admin', 'company_manager', 'assistant_manager']} />}>
+          <Route element={<ProtectedRoute allowedRoles={['admin', 'company_manager', 'assistant_manager', 'law_manager', 'company_assistant']} />}>
             <Route element={<MainLayout />}>
               <Route path="/recycle-bin" element={<RecycleBinPage />} />
             </Route>
@@ -82,6 +84,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </ThemeProvider>
       </AuthProvider>
     </Router>
   );

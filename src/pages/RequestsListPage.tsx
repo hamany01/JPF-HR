@@ -266,6 +266,19 @@ export default function RequestsListPage() {
 
       const querySnapshot = await getDocs(q);
       const docs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as RequestItem[];
+      
+      const getMs = (val: any) => {
+        if (!val) return 0;
+        if (typeof val.toDate === 'function') return val.toDate().getTime();
+        if (val && typeof val === 'object' && ('_seconds' in val || 'seconds' in val)) {
+          const sec = val._seconds !== undefined ? val._seconds : val.seconds;
+          const nano = val._nanoseconds !== undefined ? val._nanoseconds : (val.nanoseconds || 0);
+          return sec * 1000 + nano / 1000000;
+        }
+        return new Date(val).getTime() || 0;
+      };
+
+      docs.sort((a, b) => getMs(b.createdAt) - getMs(a.createdAt));
       setRequests(docs);
     } catch (error) {
       console.error("Error fetching requests:", error);

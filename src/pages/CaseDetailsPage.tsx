@@ -330,20 +330,35 @@ export default function CaseDetailsPage() {
   };
 
   const handleUpdateAssignment = async () => {
-    if (!caseId) return;
+    if (!caseId || !caseData) return;
     setSubmittingAssignment(true);
     try {
       const activeUser = auth.currentUser;
       if (!activeUser) throw new Error("لم يتم تلقيم كود تحقيق الهوية.");
 
       const caseDocRef = doc(db, 'cases', caseId);
-      await updateDoc(caseDocRef, {
-        assignmentType: assignForm.assignmentType,
-        lawFirmId: assignForm.lawFirmId || null,
-        assignedAssistantId: assignForm.assignedAssistantId || null,
-        salesEmployeeId: assignForm.salesEmployeeId || null,
-        updatedAt: serverTimestamp()
-      });
+      const role = profile?.role || '';
+      
+      let updatePayload: any = {};
+      if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+        updatePayload = {
+          assignmentType: assignForm.assignmentType,
+          lawFirmId: assignForm.lawFirmId || null,
+          assignedAssistantId: assignForm.assignedAssistantId || null,
+          salesEmployeeId: assignForm.salesEmployeeId || null,
+          updatedAt: serverTimestamp()
+        };
+      } else if (role === 'law_firm_manager') {
+        // Can only assign assistants that belong to their own firm
+        updatePayload = {
+          assignedAssistantId: assignForm.assignedAssistantId || null,
+          updatedAt: serverTimestamp()
+        };
+      } else {
+        throw new Error("غير مصرح لك بتعديل بيانات الإسناد.");
+      }
+
+      await updateDoc(caseDocRef, updatePayload);
 
       alert("تم تحديث أسماء وبيانات الإسناد بنجاح! 🎉");
       await fetchCase();
@@ -812,7 +827,7 @@ export default function CaseDetailsPage() {
         </div>
 
         {/* Assignment & Designation Panel (Managers Only) */}
-        {['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '') && (
+        {['admin', 'company_manager', 'assistant_manager', 'law_firm_manager'].includes(profile?.role || '') && (
           <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-black font-sans text-slate-800 flex items-center gap-2">
@@ -835,8 +850,9 @@ export default function CaseDetailsPage() {
                 <label className="text-[10px] font-black text-indigo-600 uppercase tracking-wider block">نوع المتابعة والإشراف</label>
                 <select 
                   value={assignForm.assignmentType}
+                  disabled={profile?.role === 'law_firm_manager'}
                   onChange={(e) => setAssignForm({ ...assignForm, assignmentType: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-705"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-705 disabled:opacity-75"
                 >
                   <option value="internal">داخلي (بالشركة)</option>
                   <option value="external">خارجي (من مكتب محاماة متعاون)</option>
@@ -847,10 +863,10 @@ export default function CaseDetailsPage() {
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 block">مكتب المحاماة الخارجي (المدير)</label>
                 <select
-                  disabled={assignForm.assignmentType === 'internal'}
+                  disabled={assignForm.assignmentType === 'internal' || profile?.role === 'law_firm_manager'}
                   value={assignForm.lawFirmId}
                   onChange={(e) => setAssignForm({ ...assignForm, lawFirmId: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 disabled:opacity-50"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 disabled:opacity-75"
                 >
                   <option value="">-- لم يتم إسناد محامي خارجي بعد --</option>
                   {lawFirmManagers.map(m => (
@@ -869,9 +885,11 @@ export default function CaseDetailsPage() {
                   className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 disabled:opacity-50"
                 >
                   <option value="">-- لم يتم تحديد مساعد مسؤول بعد --</option>
-                  {lawFirmAssistants.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
+                  {lawFirmAssistants
+                    .filter(a => profile?.role !== 'law_firm_manager' || a.lawFirmId === profile?.lawFirmId)
+                    .map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
                 </select>
               </div>
 
@@ -879,9 +897,10 @@ export default function CaseDetailsPage() {
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 block">مندوب أو موظف المبيعات المسؤول</label>
                 <select
+                  disabled={profile?.role === 'law_firm_manager'}
                   value={assignForm.salesEmployeeId}
                   onChange={(e) => setAssignForm({ ...assignForm, salesEmployeeId: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 font-sans"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 font-sans disabled:opacity-75"
                 >
                   <option value="">-- لم يتم إسناد مندوب مبيعات بعد --</option>
                   {salesEmployees.map(s => (

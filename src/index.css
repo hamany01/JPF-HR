@@ -7,5 +7,43 @@
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 font-sans;
+  @apply bg-slate-50 text-slate-900 font-sans transition-colors duration-300;
 }
+
+/* Glassmorphism CSS Utilities */
+.glass-container {
+  background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 40%, #fdf2f8 100%);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.6) !important;
+  box-shadow: 0 10px 30px rgba(99, 102, 241, 0.05) !important;
+}
+
+.glass-card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 14px 30px rgba(139, 92, 246, 0.12) !important;
+  border-color: rgba(139, 92, 246, 0.3) !important;
+}
+
+.glass-sidebar {
+  background: rgba(255, 255, 255, 0.7) !important;
+  backdrop-filter: blur(20px) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.6) !important;
+}
+
+.glass-header {
+  background: rgba(255, 255, 255, 0.6) !important;
+  backdrop-filter: blur(18px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.6) !important;
+}
+
+.gradient-text {
+  background: linear-gradient(90deg, #6366f1, #d946ef);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+

@@ -60,6 +60,34 @@ export default function RoleSelector({ selectedRole, onChange, disabled = false 
       icon: <Landmark className="w-5 h-5" />,
       colorClass: 'from-cyan-500 to-blue-600',
     },
+    {
+      value: 'law_manager',
+      label: 'المحامي العام (مدير الشؤون القانونية)',
+      description: 'إدارة وتوجيه المعاملات القانونية الداخلية، وتعديل حالات القضايا والتنسيق مع المساعدين القانونيين.',
+      icon: <Scale className="w-5 h-5" />,
+      colorClass: 'from-sky-500 to-blue-700',
+    },
+    {
+      value: 'law_assistant',
+      label: 'مساعد الشؤون القانونية',
+      description: 'صلاحيات مساندة لمراجعة المعاملات وتحديث مستندات القضايا المسندة له داخلياً.',
+      icon: <Landmark className="w-5 h-5" />,
+      colorClass: 'from-teal-400 to-cyan-600',
+    },
+    {
+      value: 'company_assistant',
+      label: 'مساعد مالي / إداري بالشركة',
+      description: 'متابعة معاملات الشركة وإعداد التقارير المالية ومراجعة الدفعات والقضايا.',
+      icon: <FileText className="w-5 h-5" />,
+      colorClass: 'from-purple-400 to-fuchsia-600',
+    },
+    {
+      value: 'employee',
+      label: 'موظف (صلاحيات محدودة)',
+      description: 'عرض ومتابعة المهام المسندة إليه بمستوى اطلاع وحرص أمني عالٍ.',
+      icon: <User className="w-5 h-5" />,
+      colorClass: 'from-slate-400 to-slate-600',
+    },
   ];
 
   const currentRoleInfo = roles.find((r) => r.value === selectedRole) || roles[roles.length - 1];
