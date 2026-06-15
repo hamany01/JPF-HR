@@ -426,6 +426,17 @@ export default function RequestsListPage() {
   const handleApprovePreliminary = async () => {
     if (!selectedRequest || isSubmitting) return;
     
+    // 1. Validate required data fields
+    const missingFields = [];
+    if (!selectedRequest.clientName) missingFields.push("اسم العميل");
+    if (!selectedRequest.defendantName) missingFields.push("اسم المنفذ ضده");
+    if (!selectedRequest.claimAmount || Number(selectedRequest.claimAmount) <= 0) missingFields.push("مبلغ المطالبة");
+    
+    if (missingFields.length > 0) {
+      alert(`تعذر إتمام القبول المبدئي بسبب نقص بيانات في الطلب. الرجاء مراجعة الحقول الأساسية التالية: ${missingFields.join('، ')}.`);
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const currentYear = new Date().getFullYear();
@@ -454,7 +465,7 @@ export default function RequestsListPage() {
           sourceRequestId: selectedRequest.id,
           requestId: selectedRequest.id,
           requestSerialNumber: selectedRequest.requestSerialNumber || '',
-          lawFirmId: "LAW-JPF-001",
+          lawFirmId: profile?.lawFirmId || "LAW-JPF-001",
           lawManagerId: user?.uid || '',
           status: 'external_assigned',
           statusLabel: 'مسندة للمكتب القانوني',
@@ -473,6 +484,7 @@ export default function RequestsListPage() {
           })),
           isDeleted: false,
           requestType: 'تنفيذ',
+          requestCreatedBy: selectedRequest.createdBy || '', // Connects the case back to the company manager creator
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           createdBy: user?.uid || '',
@@ -534,9 +546,16 @@ export default function RequestsListPage() {
       setApprovalNote('');
       fetchRequests();
       alert(`تم قبول الطلب مبدئياً وتوليد ملف القضية رقم ${generatedCaseSerial} بنجاح`);
-    } catch (error) {
-      console.error("Error approving request:", error);
-      alert("حدث خطأ أثناء القبول المبدئي والتحويل لقضية");
+    } catch (error: any) {
+      console.error("Detailed error approving request:", error);
+      const errorMessage = error?.message || String(error);
+      const errorCode = error?.code || '';
+      
+      if (errorCode === 'permission-denied' || errorMessage.includes('permission-denied') || errorMessage.includes('Permission denied')) {
+        alert(`ليس لديك صلاحية لإتمام هذه العملية (تفاصيل: قد تكون صلاحيات حسابك كمدير مكتب غير مطابقة للمكتب المحدد LAW-JPF-001 أو هناك مشكلة في قواعد قواعد البيانات لقاعدة Firestore).`);
+      } else {
+        alert(`حدث خطأ أثناء القبول المبدئي والتحويل لقضية. التفاصيل: ${errorMessage}`);
+      }
     } finally {
       setIsSubmitting(false);
     }

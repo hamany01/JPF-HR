@@ -112,6 +112,12 @@ service cloud.firestore {
       allow update: if isSignedIn() && settingId == 'sequences' && (isCompanyManager() || isLawManager());
     }
 
+    // --- Counters Collection ---
+    match /counters/{counterId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isAdmin() || isLawManager() || isCompanyManager());
+    }
+
     // --- Requests Collection ---
     match /requests/{requestId} {
       allow read: if isSignedIn() && (
@@ -128,7 +134,7 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         isAdmin() ||
         (isCompanyManager() && resource.data.createdBy == request.auth.uid && resource.data.status == 'pending_law_review') ||
-        (isLawManager() && resource.data.lawFirmId == 'LAW-JPF-001')
+        (isLawManager() && (!('lawFirmId' in resource.data) || resource.data.lawFirmId == 'LAW-JPF-001'))
       );
       
       allow delete: if isSignedIn() && isAdmin();
