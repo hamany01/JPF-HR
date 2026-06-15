@@ -25,6 +25,7 @@ export interface UserProfile {
   assignedCaseIds?: string[];
   telegramChatId?: string;
   theme?: 'classic' | 'glass';
+  originalRole?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

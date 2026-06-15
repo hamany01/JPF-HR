@@ -4,7 +4,7 @@ import { db, auth } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, Plus, Search, Filter, Loader2, X, ChevronLeft, UploadCloud, Archive, Trash2 } from 'lucide-react';
+import { FileText, Plus, Search, Filter, Loader2, X, ChevronLeft, UploadCloud, Archive, Trash2, AlertCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import DataImporter from '../components/DataImporter';
 import CasesDashboard from '../components/cases/CasesDashboard';
@@ -27,7 +27,7 @@ export default function CasesListPage() {
     defendantName: '',
     idType: 'الكل'
   });
-  const { user, profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
   const nationalities = ['الكل', 'سعودي', 'يمني', 'مصري', 'هندي', 'بنغالي', 'باكستاني', 'سوداني', 'سوري', 'أردني', 'فلسطيني'];
@@ -81,35 +81,59 @@ export default function CasesListPage() {
         return;
       }
       
-      const casesCollection = collection(db, 'cases');
-      const snapshot = await getDocs(casesCollection);
-      let docs = snapshot.docs.map(doc => ({ id: doc.id, caseId: doc.id, ...doc.data() }));
-
-      // Apply role visibility filters in-memory
-      const role = profile?.role || '';
-      const uid = activeUser.uid;
-
-      if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
-        // Allowed fully
-      } else if (role === 'sales_employee') {
-        docs = docs.filter((c: any) => c.salesEmployeeId === uid);
-      } else if (role === 'law_firm_manager') {
-        const pLawFirmId = profile?.lawFirmId || '';
-        docs = docs.filter((c: any) => c.lawFirmId === pLawFirmId);
-      } else if (role === 'law_firm_assistant') {
-        docs = docs.filter((c: any) => c.assignedAssistantId === uid);
-      } else {
-        docs = [];
+      let role = profile?.role || '';
+      // Backwards compatibility normalization
+      if (role === 'law_manager') {
+        role = 'law_firm_manager';
+      } else if (role === 'law_assistant') {
+        role = 'law_firm_assistant';
+      } else if (role === 'employee') {
+        role = 'sales_employee';
+      } else if (role === 'company_assistant') {
+        role = 'assistant_manager';
       }
 
-      // Filter by isDeleted
+      const uid = activeUser.uid;
+      let q;
+
+      if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+        q = query(collection(db, 'cases'));
+      } else if (role === 'sales_employee') {
+        q = query(collection(db, 'cases'), where('salesEmployeeId', '==', uid));
+      } else if (role === 'law_firm_manager') {
+        const pLawFirmId = profile?.lawFirmId || '';
+        if (!pLawFirmId) {
+          console.warn("⚠️ تحذير: حساب مدير مكتب المحاماة (law_firm_manager) لا يمتلك معرف مكتب محاماة lawFirmId في ملفه الشخصي!");
+        }
+        q = query(
+          collection(db, 'cases'),
+          where('lawFirmId', '==', pLawFirmId),
+          where('assignmentType', '==', 'external'),
+          where('isDeleted', '==', false)
+        );
+      } else if (role === 'law_firm_assistant') {
+        q = query(
+          collection(db, 'cases'),
+          where('assignedAssistantId', '==', uid),
+          where('isDeleted', '==', false)
+        );
+      } else {
+        setCases([]);
+        setLoading(false);
+        return;
+      }
+
+      const snapshot = await getDocs(q);
+      let docs = snapshot.docs.map(doc => ({ id: doc.id, caseId: doc.id, ...(doc.data() as any) }));
+
+      // Filter by isDeleted (double-check in-memory for safety)
       const isAdminRole = ['admin', 'company_manager', 'assistant_manager'].includes(role);
       docs = docs.filter((c: any) => {
         const hasIsDeleted = 'isDeleted' in c && c.isDeleted !== undefined;
         if (hasIsDeleted) {
           return c.isDeleted !== true;
         } else {
-          return isAdminRole;
+          return isAdminRole || role === 'law_firm_manager' || role === 'law_firm_assistant';
         }
       });
 
@@ -146,10 +170,10 @@ export default function CasesListPage() {
   };
 
   useEffect(() => {
-    if (user) {
+    if (user && !authLoading) {
       fetchCases();
     }
-  }, [user, profile, filters.nationality, filters.status, filters.platform, filters.idType]);
+  }, [user, profile, authLoading, filters.nationality, filters.status, filters.platform, filters.idType]);
 
   useEffect(() => {
     fetchPlatforms();
@@ -441,6 +465,13 @@ export default function CasesListPage() {
     }
   };
 
+  if (authLoading) return (
+    <div className="flex flex-col items-center justify-center h-64 gap-4">
+      <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+      <div className="text-slate-500 font-medium font-sans">جاري التحقق من الصلاحيات...</div>
+    </div>
+  );
+
   if (loading && cases.length === 0) return (
     <div className="flex flex-col items-center justify-center h-64 gap-4">
       <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
@@ -450,6 +481,15 @@ export default function CasesListPage() {
 
   return (
     <div className="space-y-6" dir="rtl">
+      {profile?.role === 'law_firm_manager' && !profile?.lawFirmId && (
+        <div className="p-4 bg-red-50 border border-red-100 text-red-800 rounded-2xl flex items-center gap-3 shadow-sm font-sans">
+          <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-600" />
+          <div className="text-sm font-bold leading-relaxed">
+            تنبيه: مكوّن الصلاحيات الخاص بك يشير إلى أنك "شريك إداري" (law_firm_manager)، ولكن لم يتم تحديد مكتب المحاماة "lawFirmId" الخاص بك في ملفك الشخصي بـ Firestore. يرجى التواصل مع المدير لتوجيه وإسناد القضايا لمكتبك.
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">إدارة القضايا التنفيذية</h1>

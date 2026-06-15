@@ -15,11 +15,11 @@ service cloud.firestore {
     function hasRole(roles) {
       let data = getUserData();
       return isSignedIn() && data != null && (
-        data.role in roles ||
-        (data.role == 'law_manager' && 'law_firm_manager' in roles) ||
-        (data.role == 'law_assistant' && 'law_firm_assistant' in roles) ||
-        (data.role == 'company_assistant' && 'assistant_manager' in roles) ||
-        (data.role == 'employee' && 'sales_employee' in roles)
+        roles.hasAny([data.role]) ||
+        (data.role == 'law_manager' && roles.hasAny(['law_firm_manager'])) ||
+        (data.role == 'law_assistant' && roles.hasAny(['law_firm_assistant'])) ||
+        (data.role == 'company_assistant' && roles.hasAny(['assistant_manager'])) ||
+        (data.role == 'employee' && roles.hasAny(['sales_employee']))
       );
     }
 
@@ -81,7 +81,10 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         isAdmin() ||
         hasRole(['company_manager', 'assistant_manager']) ||
-        (hasRole(['law_firm_manager']) && resource.data.lawFirmId != null && resource.data.lawFirmId == getUserData().lawFirmId) ||
+        (hasRole(['law_firm_manager']) && resource.data.lawFirmId != null && resource.data.lawFirmId == getUserData().lawFirmId && (
+          getUserData().role != 'law_manager' || 
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'assignedAssistantId', 'updatedAt'])
+        )) ||
         (hasRole(['law_firm_assistant']) && resource.data.assignedAssistantId == request.auth.uid)
       ) && (
         isAdmin() || resource.data.isDeleted != true

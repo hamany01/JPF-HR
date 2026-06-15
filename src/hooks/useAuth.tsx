@@ -4,6 +4,14 @@ import { doc, onSnapshot, getDoc, updateDoc, serverTimestamp, collection, query,
 import { auth, db } from '../firebase/config';
 import { UserProfile } from '../types/user';
 
+export function normalizeRole(role: string): any {
+  if (role === 'law_manager') return 'law_firm_manager';
+  if (role === 'law_assistant') return 'law_firm_assistant';
+  if (role === 'employee') return 'sales_employee';
+  if (role === 'company_assistant') return 'assistant_manager';
+  return role;
+}
+
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
@@ -71,12 +79,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Listen to profile changes in real-time
         unsubscribeProfile = onSnapshot(doc(db, 'users', authenticatedUser.uid), (docSnap) => {
           if (docSnap.exists()) {
-            const userData = { id: docSnap.id, uid: docSnap.id, ...docSnap.data() } as UserProfile;
-            setProfile(userData);
+            const userData = { id: docSnap.id, uid: docSnap.id, ...docSnap.data() } as any;
+            const originalRole = userData.role || '';
+            const normalizedRole = normalizeRole(originalRole);
+            
+            const profileData: UserProfile = {
+              ...userData,
+              role: normalizedRole,
+              originalRole: originalRole,
+            };
+            
+            setProfile(profileData);
             
             // Bootstrap admin if this is the first user (only if not already admin)
-            if (userData.role !== 'admin') {
-              bootstrapAdminIfNeeded(authenticatedUser.uid, userData);
+            if (profileData.role !== 'admin') {
+              bootstrapAdminIfNeeded(authenticatedUser.uid, profileData);
             }
           } else {
             setProfile(null);

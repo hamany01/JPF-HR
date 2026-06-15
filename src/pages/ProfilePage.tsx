@@ -193,7 +193,9 @@ export default function ProfilePage() {
               </div>
             </div>
             <h2 className="text-xl font-bold text-slate-900 mb-1">{profile.name}</h2>
-            <p className="text-sm font-bold text-indigo-600 mb-4">{roleTranslations[profile.role] || profile.role}</p>
+            <p className="text-sm font-bold text-indigo-600 mb-4">
+              {roleTranslations[profile.originalRole || profile.role] || profile.role}
+            </p>
             
             <div className="flex items-center justify-center gap-2 mb-6">
               {profile.isActive ? (

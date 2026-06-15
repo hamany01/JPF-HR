@@ -10,6 +10,7 @@ interface HeaderProps {
   userProfile: {
     name?: string;
     role?: string;
+    originalRole?: string;
   } | null;
 }
 
@@ -20,6 +21,8 @@ export default function Header({
   userProfile 
 }: HeaderProps) {
   const { theme } = useTheme();
+  
+  const displayedRole = userProfile?.originalRole || userProfile?.role || '';
   
   const roleTranslation = {
     'admin': 'مدير النظام الشامل',
@@ -34,7 +37,7 @@ export default function Header({
     'hr': 'الموارد البشرية',
     'manager': 'مسؤول',
     'employee': 'موظف عادي'
-  }[userProfile?.role || ''] || 'عضو';
+  }[displayedRole] || 'عضو';
 
   return (
     <header className={theme === 'glass' 
@@ -81,13 +84,23 @@ export default function Header({
         <div className="flex items-center gap-3">
           <div className="text-right hidden sm:block">
             <p className="text-sm font-bold text-slate-900 leading-tight">{userProfile?.name || 'مستخدم'}</p>
-            <p className={`text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 inline-block ${
-              theme === 'glass' 
-                ? 'text-indigo-600 bg-indigo-50/70 border border-indigo-100/30' 
-                : 'text-indigo-600 bg-indigo-50/80'
-            }`}>
-              {roleTranslation}
-            </p>
+            <div className="flex items-center gap-1.5 mt-1 justify-end">
+              {(userProfile?.role === 'law_manager' || userProfile?.role === 'law_firm_manager' || userProfile?.originalRole === 'law_manager') && (
+                <span className="text-[9px] bg-amber-500/10 text-amber-600 px-1.5 py-0.5 rounded-lg font-black border border-amber-500/20 shadow-sm flex items-center gap-0.5" dir="rtl">
+                  <span>⚖️</span>
+                  <span>شريك إداري</span>
+                </span>
+              )}
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block shadow-sm ${
+                userProfile?.role === 'law_manager' || userProfile?.role === 'law_firm_manager' || userProfile?.originalRole === 'law_manager'
+                  ? 'text-indigo-700 bg-indigo-50/90 border border-indigo-100/40'
+                  : theme === 'glass' 
+                    ? 'text-indigo-600 bg-indigo-50/70 border border-indigo-100/30' 
+                    : 'text-indigo-600 bg-indigo-50/80'
+              }`}>
+                {roleTranslation}
+              </span>
+            </div>
           </div>
           
           <div className={`w-10 h-10 rounded-full border-2 border-indigo-500/80 flex items-center justify-center overflow-hidden shadow-inner transition-transform hover:rotate-6 ${

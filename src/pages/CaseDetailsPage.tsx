@@ -37,9 +37,10 @@ type TabType = 'activities' | 'documents' | 'finance' | 'sessions';
 export default function CaseDetailsPage() {
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
-  const { user, profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const [caseData, setCaseData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [allUsers, setAllUsers] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<TabType>('activities');
   const [platformOptions, setPlatformOptions] = useState<string[]>([]);
@@ -49,8 +50,13 @@ export default function CaseDetailsPage() {
   // Edit form state
   const [editForm, setEditForm] = useState<any>({});
 
-  const canAddItems = ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '');
-  const canEditCase = ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager'].includes(profile?.role || '');
+  // Normalize user roles for legacy support
+  const effectiveRole = profile?.role === 'law_manager' 
+    ? 'law_firm_manager' 
+    : (profile?.role === 'law_assistant' ? 'law_firm_assistant' : (profile?.role === 'employee' ? 'sales_employee' : (profile?.role || '')));
+
+  const canAddItems = ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(effectiveRole);
+  const canEditCase = ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager'].includes(effectiveRole);
   
   // Subcollections data
   const [tabData, setTabData] = useState<any[]>([]);
@@ -97,6 +103,7 @@ export default function CaseDetailsPage() {
   const fetchCase = async () => {
     if (!caseId) return;
     setLoading(true);
+    setAuthError(null);
     try {
       const activeUser = auth.currentUser;
       if (!activeUser) {
@@ -112,14 +119,14 @@ export default function CaseDetailsPage() {
         const data = { id: docSnap.id, caseId: docSnap.id, ...docSnap.data() } as any;
         
         // Authorization check on the client-side matching the backend logic
-        const role = profile?.role || '';
+        const role = effectiveRole;
         const uid = activeUser.uid;
         const userData = profile || {};
 
         // Soft delete check
         if (data.isDeleted === true && role !== 'admin') {
-          alert('غير مصرح بعرض هذه القضية المؤرشفة');
-          navigate('/cases');
+          setAuthError('غير مصرح بعرض هذه القضية المؤرشفة / المحذوفة.');
+          setLoading(false);
           return;
         }
 
@@ -136,8 +143,10 @@ export default function CaseDetailsPage() {
         }
 
         if (!authorized) {
-          alert('ليس لديك صلاحية للاطلاع على هذه القضية');
-          navigate('/cases');
+          const lawFirmMsg = data.lawFirmId ? `المسندة إلى مكتب المحاماة ذو المعرف "${data.lawFirmId}"` : 'غير المسندة لمكتب محاماة معين';
+          const userLawFirmMsg = userData.lawFirmId ? `مكتبك المسجل هو: "${userData.lawFirmId}"` : 'وليس لديك مكتب محاماة مسجل في ملفك الشخصي';
+          setAuthError(`ليس لديك صلاحية للاطلاع على هذه القضية (${lawFirmMsg}، بينما دورك هو شريك إداري ${userLawFirmMsg}). يرجى التأكد من ربط مكتب المحاماة ومطابقته.`);
+          setLoading(false);
           return;
         }
 
@@ -152,22 +161,24 @@ export default function CaseDetailsPage() {
         }
         setEditForm({ ...data, fileDate: formattedDate });
       } else {
-        alert('القضية المطلوبة غير موجودة');
-        navigate('/cases');
+        setAuthError('القضية المطلوبة غير موجودة في قاعدة بيانات النظام.');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching case:", error);
+      setAuthError(`حدث خطأ غير متوقع أثناء تحميل القضية: ${error.message}`);
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    fetchCase();
-    fetchPlatforms();
-    fetchStatuses();
-    fetchDecisions();
-    fetchAllUsers();
-  }, [caseId]);
+    if (!authLoading && profile) {
+      fetchCase();
+      fetchPlatforms();
+      fetchStatuses();
+      fetchDecisions();
+      fetchAllUsers();
+    }
+  }, [caseId, profile, authLoading]);
 
   const [lawFirmManagers, setLawFirmManagers] = useState<any[]>([]);
   const [lawFirmAssistants, setLawFirmAssistants] = useState<any[]>([]);
@@ -194,11 +205,11 @@ export default function CaseDetailsPage() {
         const uid = docSnap.id;
         usersMap[uid] = udata.name || udata.fullName || 'مستخدم';
         
-        if (udata.role === 'law_firm_manager') {
+        if (udata.role === 'law_firm_manager' || udata.role === 'law_manager') {
           lfManagers.push({ id: uid, name: udata.name || udata.fullName || uid, ...udata });
-        } else if (udata.role === 'law_firm_assistant') {
+        } else if (udata.role === 'law_firm_assistant' || udata.role === 'law_assistant') {
           lfAssistants.push({ id: uid, name: udata.name || udata.fullName || uid, ...udata });
-        } else if (udata.role === 'sales_employee') {
+        } else if (udata.role === 'sales_employee' || udata.role === 'employee') {
           sales.push({ id: uid, name: udata.name || udata.fullName || uid, ...udata });
         }
       });
@@ -230,7 +241,7 @@ export default function CaseDetailsPage() {
       const activeUser = auth.currentUser;
       if (!activeUser) throw new Error("لم يتم تلقيم جلسة التحقق الحالية.");
 
-      const role = profile?.role || '';
+      const role = effectiveRole;
       const currentStatus = caseData.status || 'draft';
 
       // Verify Role Permission
@@ -337,7 +348,7 @@ export default function CaseDetailsPage() {
       if (!activeUser) throw new Error("لم يتم تلقيم كود تحقيق الهوية.");
 
       const caseDocRef = doc(db, 'cases', caseId);
-      const role = profile?.role || '';
+      const role = effectiveRole;
       
       let updatePayload: any = {};
       if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
@@ -580,12 +591,36 @@ export default function CaseDetailsPage() {
     { id: 'finance', label: 'الحركات المالية', icon: CreditCard },
   ];
 
-  if (loading) return (
+  if (authLoading || (loading && !authError)) return (
     <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
       <Loader2 className="w-10 h-10 text-indigo-600 animate-spin" />
-      <p className="text-slate-500 font-medium font-sans">جاري تحميل بيانات القضية...</p>
+      <p className="text-slate-500 font-medium font-sans">جاري تحميل البيانات والصلاحيات...</p>
     </div>
   );
+
+  if (authError) {
+    return (
+      <div className="max-w-2xl mx-auto my-12 p-8 bg-white border border-slate-100 rounded-3xl shadow-xl shadow-slate-100/50 text-center space-y-6" dir="rtl">
+        <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
+          <AlertCircle size={32} />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-xl font-black text-slate-900 font-sans">تنبيه الصلاحيات والدخول</h2>
+          <p className="text-slate-500 text-sm leading-relaxed font-sans">{authError}</p>
+        </div>
+        <div className="p-4 bg-slate-50 rounded-2xl text-right text-xs text-slate-400 space-y-1 font-mono">
+          <div>الدور المعتمد: {effectiveRole || 'بدون دور'}</div>
+          <div>معرف المستخدم الحالي: {user?.uid || 'غير معروف'}</div>
+        </div>
+        <button 
+          onClick={() => navigate('/cases')}
+          className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all text-sm font-sans"
+        >
+          العودة لقائمة القضايا
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8" dir="rtl">
@@ -760,7 +795,7 @@ export default function CaseDetailsPage() {
                 )}
 
                 {/* Internal -> Court OR Closed */}
-                {caseData.status === 'internal' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '') && (
+                {caseData.status === 'internal' && ['admin', 'company_manager', 'assistant_manager'].includes(effectiveRole) && (
                   <>
                     <button 
                       onClick={() => handleTransitionStatus('closed')}
@@ -775,7 +810,7 @@ export default function CaseDetailsPage() {
                 {caseData.status === 'external_assigned' && (
                   <>
                     {/* Company Managers and External Law Managers can transition */}
-                    {['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '') && (
+                    {['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(effectiveRole) && (
                       <button 
                         onClick={() => handleTransitionStatus('in_court')}
                         className="px-4 py-2 bg-indigo-600 hover:bg-indigo-750 text-white text-xs font-black rounded-xl transition-all"
@@ -789,7 +824,7 @@ export default function CaseDetailsPage() {
                 {/* In Court -> Closed */}
                 {caseData.status === 'in_court' && (
                   <>
-                    {['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '') && (
+                    {['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(effectiveRole) && (
                       <button 
                         onClick={() => handleTransitionStatus('closed')}
                         className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all"
@@ -801,7 +836,7 @@ export default function CaseDetailsPage() {
                 )}
 
                 {/* Closed -> Reopen to Review */}
-                {caseData.status === 'closed' && ['admin', 'company_manager'].includes(profile?.role || '') && (
+                {caseData.status === 'closed' && ['admin', 'company_manager'].includes(effectiveRole) && (
                   <button 
                     onClick={() => handleTransitionStatus('under_review')}
                     className="px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white text-xs font-black rounded-xl transition-all"
@@ -812,12 +847,12 @@ export default function CaseDetailsPage() {
 
                 {/* No transitions found or allowed */}
                 {!(
-                  (caseData.status === 'draft' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '')) ||
-                  (caseData.status === 'under_review' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '')) ||
-                  (caseData.status === 'internal' && ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '')) ||
-                  (caseData.status === 'external_assigned' && ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '')) ||
-                  (caseData.status === 'in_court' && ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(profile?.role || '')) ||
-                  (caseData.status === 'closed' && ['admin', 'company_manager'].includes(profile?.role || ''))
+                  (caseData.status === 'draft' && ['admin', 'company_manager', 'assistant_manager'].includes(effectiveRole)) ||
+                  (caseData.status === 'under_review' && ['admin', 'company_manager', 'assistant_manager'].includes(effectiveRole)) ||
+                  (caseData.status === 'internal' && ['admin', 'company_manager', 'assistant_manager'].includes(effectiveRole)) ||
+                  (caseData.status === 'external_assigned' && ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(effectiveRole)) ||
+                  (caseData.status === 'in_court' && ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(effectiveRole)) ||
+                  (caseData.status === 'closed' && ['admin', 'company_manager'].includes(effectiveRole))
                 ) && (
                   <span className="text-xs text-slate-400 font-bold bg-slate-100 px-3 py-1 rounded-lg">لا توجد إجراءات متاحة لصلاحيات دورك الحالي على هذه القضية حالياً.</span>
                 )}
@@ -827,7 +862,7 @@ export default function CaseDetailsPage() {
         </div>
 
         {/* Assignment & Designation Panel (Managers Only) */}
-        {['admin', 'company_manager', 'assistant_manager', 'law_firm_manager'].includes(profile?.role || '') && (
+        {['admin', 'company_manager', 'assistant_manager', 'law_firm_manager'].includes(effectiveRole) && (
           <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-black font-sans text-slate-800 flex items-center gap-2">
@@ -850,7 +885,7 @@ export default function CaseDetailsPage() {
                 <label className="text-[10px] font-black text-indigo-600 uppercase tracking-wider block">نوع المتابعة والإشراف</label>
                 <select 
                   value={assignForm.assignmentType}
-                  disabled={profile?.role === 'law_firm_manager'}
+                  disabled={effectiveRole === 'law_firm_manager'}
                   onChange={(e) => setAssignForm({ ...assignForm, assignmentType: e.target.value })}
                   className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-705 disabled:opacity-75"
                 >
@@ -863,7 +898,7 @@ export default function CaseDetailsPage() {
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 block">مكتب المحاماة الخارجي (المدير)</label>
                 <select
-                  disabled={assignForm.assignmentType === 'internal' || profile?.role === 'law_firm_manager'}
+                  disabled={assignForm.assignmentType === 'internal' || effectiveRole === 'law_firm_manager'}
                   value={assignForm.lawFirmId}
                   onChange={(e) => setAssignForm({ ...assignForm, lawFirmId: e.target.value })}
                   className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 disabled:opacity-75"
@@ -886,7 +921,7 @@ export default function CaseDetailsPage() {
                 >
                   <option value="">-- لم يتم تحديد مساعد مسؤول بعد --</option>
                   {lawFirmAssistants
-                    .filter(a => profile?.role !== 'law_firm_manager' || a.lawFirmId === profile?.lawFirmId)
+                    .filter(a => effectiveRole !== 'law_firm_manager' || a.lawFirmId === profile?.lawFirmId)
                     .map(a => (
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
@@ -897,7 +932,7 @@ export default function CaseDetailsPage() {
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 block">مندوب أو موظف المبيعات المسؤول</label>
                 <select
-                  disabled={profile?.role === 'law_firm_manager'}
+                  disabled={effectiveRole === 'law_firm_manager'}
                   value={assignForm.salesEmployeeId}
                   onChange={(e) => setAssignForm({ ...assignForm, salesEmployeeId: e.target.value })}
                   className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-750 font-sans disabled:opacity-75"

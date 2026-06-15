@@ -28,7 +28,8 @@ import {
   CreditCard,
   PieChart as PieChartIcon,
   Activity as ActivityIcon,
-  History as HistoryIcon
+  History as HistoryIcon,
+  Loader2
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { 
@@ -59,7 +60,7 @@ interface DashboardStats {
 }
 
 export default function DashboardPage() {
-  const { profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   
   const [requests, setRequests] = useState<any[]>([]);
@@ -70,6 +71,8 @@ export default function DashboardPage() {
 
   // Real-time data fetching
   useEffect(() => {
+    if (authLoading || !profile) return;
+
     setLoading(true);
 
     const fetchAllUsers = async () => {
@@ -93,11 +96,61 @@ export default function DashboardPage() {
       setRequests(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
-    // Listen to cases
-    const qCases = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
-    const unsubscribeCases = onSnapshot(qCases, (snapshot) => {
-      setCases(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    // Listen to cases based on role to satisfy Firestore listing security rules
+    let role = profile?.role || '';
+    if (role === 'law_manager') {
+      role = 'law_firm_manager';
+    } else if (role === 'law_assistant') {
+      role = 'law_firm_assistant';
+    } else if (role === 'employee') {
+      role = 'sales_employee';
+    } else if (role === 'company_assistant') {
+      role = 'assistant_manager';
+    }
+
+    const uid = user?.uid || '';
+    let qCases;
+
+    if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+      qCases = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
+    } else if (role === 'sales_employee') {
+      qCases = query(collection(db, 'cases'), where('salesEmployeeId', '==', uid));
+    } else if (role === 'law_firm_manager') {
+      const pLawFirmId = profile?.lawFirmId || '';
+      qCases = query(
+        collection(db, 'cases'),
+        where('lawFirmId', '==', pLawFirmId),
+        where('assignmentType', '==', 'external'),
+        where('isDeleted', '==', false)
+      );
+    } else if (role === 'law_firm_assistant') {
+      qCases = query(
+        collection(db, 'cases'),
+        where('assignedAssistantId', '==', uid),
+        where('isDeleted', '==', false)
+      );
+    } else {
+      qCases = null;
+    }
+
+    let unsubscribeCases = () => {};
+    if (qCases) {
+      unsubscribeCases = onSnapshot(qCases, (snapshot) => {
+        let docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Sort in-memory to avoid needing composite indexes in Firestore
+        docs.sort((a: any, b: any) => {
+          const getMs = (val: any) => {
+            if (!val) return 0;
+            if (typeof val.toDate === 'function') return val.toDate().getTime();
+            return new Date(val).getTime() || 0;
+          };
+          return getMs(b.createdAt) - getMs(a.createdAt);
+        });
+        setCases(docs);
+      }, (error) => {
+        console.error("Error subscribing to cases in Dashboard:", error);
+      });
+    }
 
     // Listen to recent events
     const qEvents = query(
@@ -115,7 +168,7 @@ export default function DashboardPage() {
       unsubscribeCases();
       unsubscribeEvents();
     };
-  }, []);
+  }, [user, profile, authLoading]);
 
   // Compute Stats
   const activeRequests = requests.filter(r => ['pending', 'approved_preliminary'].includes(r.status));
@@ -220,6 +273,13 @@ export default function DashboardPage() {
         </div>
       </div>
     </motion.div>
+  );
+
+  if (authLoading) return (
+    <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+      <Loader2 className="w-10 h-10 text-indigo-600 animate-spin" />
+      <p className="text-slate-550 font-medium font-sans">جاري تحميل لوحة التحكم وتحليل الصلاحيات...</p>
+    </div>
   );
 
   return (
