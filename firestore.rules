@@ -16,10 +16,7 @@ service cloud.firestore {
       let data = getUserData();
       return isSignedIn() && data != null && (
         roles.hasAny([data.role]) ||
-        (data.role == 'law_manager' && roles.hasAny(['law_firm_manager'])) ||
-        (data.role == 'law_assistant' && roles.hasAny(['law_firm_assistant'])) ||
-        (data.role == 'company_assistant' && roles.hasAny(['assistant_manager'])) ||
-        (data.role == 'employee' && roles.hasAny(['sales_employee']))
+        (data.role == 'law_manager' && roles.hasAny(['law_firm_manager']))
       );
     }
 
@@ -27,21 +24,18 @@ service cloud.firestore {
       return hasRole(['admin']);
     }
 
-    function isCompanyRole() {
-      return hasRole(['admin', 'company_manager', 'assistant_manager']);
+    function isCompanyManager() {
+      return hasRole(['company_manager']);
     }
     
-    function isAnyStaff() {
-      return hasRole(['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant', 'sales_employee']);
+    function isLawManager() {
+      return hasRole(['admin', 'law_firm_manager', 'law_manager']);
     }
 
     // --- Users Collection ---
     match /users/{userId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn(); 
-      
+      allow read: if isSignedIn();
       allow create: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
-      // To prevent privilege escalation, don't allow setting role unless admin
       allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId && (request.resource.data.role == resource.data.role || !('role' in resource.data)));
     }
 
@@ -53,94 +47,60 @@ service cloud.firestore {
 
     // --- Cases Collection ---
     match /cases/{caseId} {
-      allow get: if isSignedIn() && (
+      allow read: if isSignedIn() && (
         isAdmin() ||
-        hasRole(['company_manager', 'assistant_manager']) ||
-        (hasRole(['sales_employee']) && resource.data.salesEmployeeId == request.auth.uid) ||
-        (hasRole(['law_firm_manager']) && resource.data.lawFirmId != null && resource.data.lawFirmId == getUserData().lawFirmId) ||
-        (hasRole(['law_firm_assistant']) && resource.data.assignedAssistantId == request.auth.uid)
-      ) && (
-        isAdmin() || resource.data.isDeleted != true
-      );
-
-      allow list: if isSignedIn() && (
-        isAdmin() ||
-        hasRole(['company_manager', 'assistant_manager']) ||
-        (hasRole(['sales_employee']) && resource.data.salesEmployeeId == request.auth.uid) ||
-        (hasRole(['law_firm_manager']) && resource.data.lawFirmId != null && resource.data.lawFirmId == getUserData().lawFirmId) ||
-        (hasRole(['law_firm_assistant']) && resource.data.assignedAssistantId == request.auth.uid)
-      ) && (
-        isAdmin() || resource.data.isDeleted != true
+        (isCompanyManager() && (resource.data.requestCreatedBy == request.auth.uid || resource.data.createdBy == request.auth.uid || !('requestCreatedBy' in resource.data))) ||
+        (isLawManager() && resource.data.lawFirmId == 'LAW-JPF-001')
       );
 
       allow create: if isSignedIn() && (
         isAdmin() ||
-        hasRole(['company_manager', 'assistant_manager'])
-      ) && (!('isDeleted' in request.resource.data) || request.resource.data.isDeleted != true);
+        isLawManager()
+      );
 
       allow update: if isSignedIn() && (
         isAdmin() ||
-        hasRole(['company_manager', 'assistant_manager']) ||
-        (hasRole(['law_firm_manager']) && resource.data.lawFirmId != null && resource.data.lawFirmId == getUserData().lawFirmId && (
-          getUserData().role != 'law_manager' || 
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'assignedAssistantId', 'updatedAt'])
-        )) ||
-        (hasRole(['law_firm_assistant']) && resource.data.assignedAssistantId == request.auth.uid)
-      ) && (
-        isAdmin() || resource.data.isDeleted != true
+        (isLawManager() && resource.data.lawFirmId == 'LAW-JPF-001' && (
+          // Lock document edits once the case is closed
+          resource.data.status != 'closed' || isAdmin()
+        ))
       );
 
       allow delete: if isSignedIn() && isAdmin();
 
-      // Subcollections
+      // Subcollections under Cases
       match /activities/{docId} {
         allow read: if isSignedIn();
-        allow create, update: if isAnyStaff();
-        allow delete: if isCompanyRole();
+        allow create, update: if isAdmin() || (isLawManager() && get(/databases/$(database)/documents/cases/$(caseId)).data.status != 'closed');
+        allow delete: if isAdmin();
       }
       
       match /documents/{docId} {
         allow read: if isSignedIn();
-        allow create, update: if isAnyStaff();
-        allow delete: if isCompanyRole();
+        allow create, update: if isAdmin() || (isLawManager() && get(/databases/$(database)/documents/cases/$(caseId)).data.status != 'closed');
+        allow delete: if isAdmin();
       }
 
       match /sessions/{docId} {
         allow read: if isSignedIn();
-        allow create, update: if isAnyStaff();
-        allow delete: if isCompanyRole();
+        allow create, update: if isAdmin() || (isLawManager() && get(/databases/$(database)/documents/cases/$(caseId)).data.status != 'closed');
+        allow delete: if isAdmin();
       }
 
       match /payments/{docId} {
         allow read: if isSignedIn();
-        allow create, update, delete: if isAdmin() || hasRole(['company_manager', 'assistant_manager']);
+        allow create, update, delete: if isAdmin() || (isLawManager() && get(/databases/$(database)/documents/cases/$(caseId)).data.status != 'closed');
       }
     }
 
     // --- Payment Plans Collection ---
     match /payment_plans/{planId} {
-      allow get: if isSignedIn() && (
-        isAdmin() ||
-        hasRole(['company_manager', 'assistant_manager']) ||
-        hasRole(['sales_employee', 'law_firm_manager', 'law_firm_assistant'])
-      ) && (isAdmin() || resource.data.isDeleted != true);
-
-      allow list: if isSignedIn() && (
-        isAdmin() ||
-        hasRole(['company_manager', 'assistant_manager']) ||
-        hasRole(['sales_employee', 'law_firm_manager', 'law_firm_assistant'])
-      ) && (isAdmin() || resource.data.isDeleted != true);
-
-      allow create: if isSignedIn() && (
-        isAdmin() ||
-        hasRole(['company_manager', 'assistant_manager'])
-      );
-
-      allow update: if isSignedIn() && (
-        isAdmin() ||
-        hasRole(['company_manager', 'assistant_manager'])
-      );
-
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() || (isLawManager() && (
+        // Enforce lock if case status is closed
+        !exists(/databases/$(database)/documents/cases/$(request.resource.data.caseId)) ||
+        get(/databases/$(database)/documents/cases/$(request.resource.data.caseId)).data.status != 'closed'
+      ));
       allow delete: if isSignedIn() && isAdmin();
     }
 
@@ -149,34 +109,34 @@ service cloud.firestore {
       allow get: if settingId == 'appearance' || isSignedIn();
       allow list: if isSignedIn();
       allow write: if isAdmin();
-      allow update: if isSignedIn() && settingId == 'sequences' && (isCompanyRole() || hasRole(['law_firm_manager']));
+      allow update: if isSignedIn() && settingId == 'sequences' && (isCompanyManager() || isLawManager());
     }
 
     // --- Requests Collection ---
     match /requests/{requestId} {
-      allow read: if isSignedIn();
-      allow create: if isCompanyRole() || hasRole(['law_firm_manager']);
-      allow update: if hasRole(['admin', 'law_firm_manager', 'company_manager']) || (isCompanyRole() && resource.data.status == 'pending');
-      allow delete: if isAdmin();
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        (isCompanyManager() && resource.data.createdBy == request.auth.uid) ||
+        isLawManager()
+      );
+      
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        isCompanyManager()
+      );
+      
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (isCompanyManager() && resource.data.createdBy == request.auth.uid && resource.data.status == 'pending_law_review') ||
+        (isLawManager() && resource.data.lawFirmId == 'LAW-JPF-001')
+      );
+      
+      allow delete: if isSignedIn() && isAdmin();
 
       match /notes/{noteId} {
-        allow read: if isSignedIn() && (
-          hasRole(['admin', 'law_firm_manager', 'company_manager', 'assistant_manager', 'law_firm_assistant']) ||
-          resource.data.scope == 'employee_public' ||
-          (resource.data.scope == 'employee_targeted' && resource.data.targetEmployeeId == request.auth.uid) ||
-          resource.data.createdBy == request.auth.uid
-        );
-        
-        allow create: if isSignedIn() && (
-          hasRole(['admin', 'law_firm_manager', 'company_manager', 'assistant_manager', 'law_firm_assistant']) ||
-          (hasRole(['sales_employee']) && 
-           request.resource.data.scope == 'employee_public' &&
-           request.resource.data.createdBy == request.auth.uid)
-        );
-        
-        allow update, delete: if isSignedIn() && (
-          hasRole(['admin']) || resource.data.createdBy == request.auth.uid
-        );
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && (isLawManager() || isCompanyManager());
+        allow update, delete: if isSignedIn() && (isAdmin() || resource.data.createdBy == request.auth.uid);
       }
     }
 
@@ -204,12 +164,11 @@ service cloud.firestore {
       allow read, create, update: if isSignedIn();
     }
 
-    // --- Case Sessions Collection (for Reminders) ---
+    // --- Case Sessions Collection ---
     match /case_sessions/{sessionId} {
       allow read: if isSignedIn();
-      allow create: if isAnyStaff();
-      allow update: if isSignedIn(); 
-      allow delete: if isCompanyRole();
+      allow create, update: if isAdmin() || isLawManager();
+      allow delete: if isAdmin();
     }
 
     // --- Notifications Collection ---

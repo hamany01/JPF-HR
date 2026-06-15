@@ -91,7 +91,7 @@ export default function CasePaymentsTab({
     notes: ''
   });
 
-  const isJPFManager = ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '');
+  const isJPFManager = ['admin', 'law_firm_manager', 'law_manager'].includes(profile?.role || '');
   const isSalesEmployee = profile?.role === 'sales_employee';
 
   // Fetch Parent Case Info
@@ -240,7 +240,7 @@ export default function CasePaymentsTab({
     return `https://wa.me/${cleaned}?text=${encodeURIComponent(msg)}`;
   };
 
-  const canManagePayments = ['admin', 'company_manager', 'law_manager'].includes(profile?.role || '');
+  const canManagePayments = ['admin', 'law_firm_manager', 'law_manager'].includes(profile?.role || '');
 
   useEffect(() => {
     if (!caseId) return;

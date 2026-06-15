@@ -67,7 +67,7 @@ interface RequestItem {
   transactionType: string;
   attachments: Attachment[];
   platform: string;
-  status: 'pending' | 'approved_preliminary' | 'approved' | 'rejected' | 'converted_to_case';
+  status: 'pending_law_review' | 'approved_preliminary' | 'rejected_by_law_firm' | 'converted_to_case' | 'case_closed' | 'archived';
   statusLabel: string;
   rejectionReason?: string;
   approvalNote?: string;
@@ -138,9 +138,9 @@ export default function RequestsListPage() {
     }
   }, [requestIdParam, requests]);
 
-  const canCreateRequest = ['admin', 'company_manager', 'company_assistant'].includes(profile?.role || '');
-  const canReviewRequest = ['admin', 'law_manager'].includes(profile?.role || '');
-  const canReactivate = ['admin', 'law_manager', 'company_manager'].includes(profile?.role || '');
+  const canCreateRequest = ['admin', 'company_manager'].includes(profile?.role || '');
+  const canReviewRequest = ['admin', 'law_firm_manager'].includes(profile?.role || '');
+  const canReactivate = ['admin', 'law_firm_manager', 'company_manager'].includes(profile?.role || '');
   
   const { employees, loading: loadingEmployees } = useEmployees();
   
@@ -255,7 +255,13 @@ export default function RequestsListPage() {
   const fetchRequests = async () => {
     setLoading(true);
     try {
-      let q = query(collection(db, 'requests'), orderBy('createdAt', 'desc'));
+      let q = query(collection(db, 'requests'));
+
+      if (profile?.role === 'company_manager') {
+        q = query(q, where('createdBy', '==', user?.uid));
+      } else if (profile?.role === 'law_firm_manager') {
+        q = query(q, where('lawFirmId', '==', 'LAW-JPF-001'));
+      }
 
       if (filters.status !== 'الكل') {
         q = query(q, where('status', '==', filters.status));
@@ -321,8 +327,9 @@ export default function RequestsListPage() {
           platform: formData.platform,
           attachments: validAttachments,
           requestSerialNumber: formattedSerial,
-          status: 'pending',
-          statusLabel: 'قيد المراجعة',
+          status: 'pending_law_review',
+          statusLabel: 'بانتظار مراجعة مكتب المحاماة',
+          lawFirmId: 'LAW-JPF-001',
           createdBy: user?.uid,
           createdAt: serverTimestamp(),
           assignedEmployeeId: formData.assignedEmployeeId || '',
@@ -421,139 +428,123 @@ export default function RequestsListPage() {
     
     setIsSubmitting(true);
     try {
-      const requestRef = doc(db, 'requests', selectedRequest.id);
-      await updateDoc(requestRef, {
-        status: 'approved_preliminary',
-        statusLabel: 'مقبول مبدئياً',
-        approvedPreliminaryBy: user?.uid,
-        approvedPreliminaryAt: serverTimestamp(),
-        approvalNote: approvalNote,
-        updatedAt: serverTimestamp()
+      const currentYear = new Date().getFullYear();
+      let generatedCaseSerial = '';
+      const caseRef = doc(collection(db, 'cases'));
+      const counterRef = doc(db, 'counters', 'executionCases');
+
+      await runTransaction(db, async (transaction) => {
+        // 1. Generate Case Serial Number
+        const counterDoc = await transaction.get(counterRef);
+        let newCount = 1;
+        let prefix = 'CASE';
+        if (counterDoc.exists()) {
+          newCount = (counterDoc.data().currentSerial || 0) + 1;
+        } else {
+          transaction.set(counterRef, { currentSerial: 1, prefix: 'CASE' });
+        }
+        const paddedCount = String(newCount).padStart(5, '0');
+        generatedCaseSerial = `${prefix}-${currentYear}-${paddedCount}`;
+        transaction.update(counterRef, { currentSerial: newCount });
+
+        // 2. Write Case Document
+        const caseData = {
+          id: caseRef.id,
+          serialNumber: generatedCaseSerial,
+          sourceRequestId: selectedRequest.id,
+          requestId: selectedRequest.id,
+          requestSerialNumber: selectedRequest.requestSerialNumber || '',
+          lawFirmId: "LAW-JPF-001",
+          lawManagerId: user?.uid || '',
+          status: 'external_assigned',
+          statusLabel: 'مسندة للمكتب القانوني',
+          claimAmount: Number(selectedRequest.claimAmount) || 0,
+          receivedAmount: 0,
+          remainingAmount: Number(selectedRequest.claimAmount) || 0,
+          defendantName: selectedRequest.defendantName || '',
+          defendantPhone: selectedRequest.defendantPhone || '',
+          applicantName: selectedRequest.clientName || '',
+          clientNumber: selectedRequest.clientNumber || '',
+          electronicReferenceNumber: selectedRequest.electronicReferenceNumber || '',
+          platform: selectedRequest.platform || '',
+          attachments: (selectedRequest.attachments || []).map((att: any) => ({
+            ...att,
+            archived: false
+          })),
+          isDeleted: false,
+          requestType: 'تنفيذ',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdBy: user?.uid || '',
+        };
+        transaction.set(caseRef, caseData);
+
+        // 3. Update Request document
+        const requestRef = doc(db, 'requests', selectedRequest.id);
+        transaction.update(requestRef, {
+          status: 'approved_preliminary',
+          statusLabel: 'مقبول ومحول لقضية',
+          approvedPreliminaryBy: user?.uid,
+          approvedPreliminaryAt: serverTimestamp(),
+          approvalNote: approvalNote,
+          caseId: caseRef.id,
+          caseSerialNumber: generatedCaseSerial,
+          updatedAt: serverTimestamp()
+        });
       });
 
-      // Log event
-      await createRequestEvent({
-        requestId: selectedRequest.id,
-        requestSerialNumber: selectedRequest.requestSerialNumber,
-        type: 'request_approved_preliminary' as any,
-        message: `تم قبول الطلب ${selectedRequest.requestSerialNumber} مبدئياً بواسطة ${profile?.name}.`,
-        payload: { 
-          serialNumber: selectedRequest.requestSerialNumber,
-          applicantName: selectedRequest.clientName,
-          approvalNote 
-        },
-        createdBy: user?.uid || '',
-        createdByName: profile?.name || 'مستخدم'
-      });
+      // 4. Log events
+      try {
+        await createRequestEvent({
+          requestId: selectedRequest.id,
+          requestSerialNumber: selectedRequest.requestSerialNumber,
+          type: 'request_approved_preliminary' as any,
+          message: `تم قبول الطلب ${selectedRequest.requestSerialNumber} مبدئياً وتوليد ملف القضية رقم ${generatedCaseSerial} بواسطة ${profile?.name}.`,
+          payload: { 
+            serialNumber: selectedRequest.requestSerialNumber,
+            applicantName: selectedRequest.clientName,
+            approvalNote 
+          },
+          createdBy: user?.uid || '',
+          createdByName: profile?.name || 'مستخدم'
+        });
+
+        await createCaseEvent({
+          caseId: caseRef.id,
+          caseSerialNumber: generatedCaseSerial,
+          type: 'case_created' as any,
+          message: `تم إنشاء قضية تنفيذية جديدة للمنفذ ضده ${selectedRequest.defendantName} بمبلغ ${selectedRequest.claimAmount} ريال عند اعتماد الطلب.`,
+          payload: { 
+            caseId: caseRef.id,
+            requestId: selectedRequest.id,
+            caseSerialNumber: generatedCaseSerial,
+            plaintiff: selectedRequest.clientName,
+            defendant: selectedRequest.defendantName,
+            totalAmount: selectedRequest.claimAmount
+          },
+          createdBy: user?.uid || '',
+          createdByName: profile?.name || 'مستخدم'
+        });
+      } catch (evtErr) {
+        console.error("Event system error: ", evtErr);
+      }
 
       setIsApproveModalOpen(false);
       setIsDetailsOpen(false);
       setApprovalNote('');
       fetchRequests();
-      alert('تم قبول الطلب مبدئياً بنجاح');
+      alert(`تم قبول الطلب مبدئياً وتوليد ملف القضية رقم ${generatedCaseSerial} بنجاح`);
     } catch (error) {
       console.error("Error approving request:", error);
-      alert("حدث خطأ أثناء القبول المبدئي");
+      alert("حدث خطأ أثناء القبول المبدئي والتحويل لقضية");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleConvertToCase = async () => {
-    if (!selectedRequest || isSubmitting) return;
-    if (selectedRequest.status !== 'approved_preliminary') return;
-    
-    setIsSubmitting(true);
-    const caseRef = doc(collection(db, 'cases'));
-    try {
-      await runTransaction(db, async (transaction) => {
-        // 1. Create Case
-        const caseData = {
-          requestSerialNumber: selectedRequest.requestSerialNumber,
-          najizClaimNumber: selectedRequest.najizClaimNumber || '',
-          clientNumber: selectedRequest.clientNumber || '',
-          clientId: selectedRequest.clientId || '',
-          applicantName: selectedRequest.clientName,
-          requestType: 'تنفيذ',
-          claimAmount: selectedRequest.claimAmount,
-          electronicReferenceNumber: selectedRequest.electronicReferenceNumber || '',
-          promissoryNoteAmount: selectedRequest.promissoryNoteAmount || 0,
-          transactionType: selectedRequest.transactionType || '',
-          receivedAmount: 0,
-          remainingAmount: selectedRequest.claimAmount,
-          defendantName: selectedRequest.defendantName,
-          defendantPhone: selectedRequest.defendantPhone,
-          platform: selectedRequest.platform,
-          attachments: selectedRequest.attachments || [],
-          status: convertData.caseStatus,
-          statusLabel: convertData.caseStatus === 'open' ? 'مفتوحة' : 'قيد التنفيذ', // Simple label mapper
-          externalCaseNumber: convertData.externalCaseNumber,
-          startDate: convertData.startDate,
-          sourceRequestId: selectedRequest.id,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          createdBy: user?.uid
-        };
-        transaction.set(caseRef, caseData);
-
-        // 2. Update Request
-        const requestRef = doc(db, 'requests', selectedRequest.id);
-        transaction.update(requestRef, {
-          status: 'converted_to_case',
-          statusLabel: 'محول لقضية تنفيذية',
-          caseId: caseRef.id,
-          convertedBy: user?.uid,
-          convertedAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-      });
-
-      // 3. Log conversion event (outside transaction to trigger notifications)
-      await createRequestEvent({
-        requestId: selectedRequest.id,
-        requestSerialNumber: selectedRequest.requestSerialNumber,
-        type: 'request_converted_to_case' as any,
-        message: `تم تحويل الطلب ${selectedRequest.requestSerialNumber} إلى قضية تنفيذية بواسطة ${profile?.name}.`,
-        payload: { 
-          requestId: selectedRequest.id,
-          serialNumber: selectedRequest.requestSerialNumber,
-          caseId: caseRef.id,
-          caseSerialNumber: convertData.externalCaseNumber,
-          applicantName: selectedRequest.clientName,
-          platform: selectedRequest.platform 
-        },
-        createdBy: user?.uid || '',
-        createdByName: profile?.name || 'مستخدم'
-      });
-
-      // 4. Log case created event
-      await createCaseEvent({
-        caseId: caseRef.id,
-        caseSerialNumber: convertData.externalCaseNumber,
-        type: 'case_created' as any,
-        message: `تم إنشاء قضية تنفيذية جديدة للمنفذ ضده ${selectedRequest.defendantName} بمبلغ ${selectedRequest.claimAmount} ريال بواسطة ${profile?.name}.`,
-        payload: { 
-          caseId: caseRef.id,
-          requestId: selectedRequest.id,
-          caseSerialNumber: convertData.externalCaseNumber,
-          plaintiff: selectedRequest.clientName,
-          defendant: selectedRequest.defendantName,
-          totalAmount: selectedRequest.claimAmount
-        },
-        createdBy: user?.uid || '',
-        createdByName: profile?.name || 'مستخدم'
-      });
-
-      alert('تم تحويل الطلب إلى ملف قضية تنفيذية بنجاح');
-      setIsConvertModalOpen(false);
-      setIsDetailsOpen(false);
-      fetchRequests();
-    } catch (error) {
-      console.error("Error converting request:", error);
-      alert("حدث خطأ أثناء تحويل الطلب");
-    } finally {
-      setIsSubmitting(false);
-    }
+    // Deprecated in favor of the single atomic approval transaction.
+    alert("هذه الخطوة مدمجة تلقائياً مع زر القبول المبدئي.");
   };
 
   const handleRejectRequest = async () => {
@@ -563,8 +554,8 @@ export default function RequestsListPage() {
     try {
       const requestRef = doc(db, 'requests', selectedRequest.id);
       await updateDoc(requestRef, {
-        status: 'rejected',
-        statusLabel: 'مرفوض',
+        status: 'rejected_by_law_firm',
+        statusLabel: 'مرفوض من المكتب القانوني',
         rejectionReason: rejectionReason,
         reviewedBy: user?.uid,
         reviewedAt: serverTimestamp()
@@ -604,8 +595,8 @@ export default function RequestsListPage() {
     try {
       const requestRef = doc(db, 'requests', selectedRequest.id);
       const updateData = {
-        status: 'pending',
-        statusLabel: 'قيد المراجعة (معاد تفعيله)',
+        status: 'pending_law_review',
+        statusLabel: 'بانتظار مراجعة مكتب المحاماة (معاد تفعيله)',
         reactivated: true,
         reactivatedReason: reactivateData.reason,
         attachmentsUpdated: reactivateData.attachmentsUpdated,
@@ -650,8 +641,8 @@ export default function RequestsListPage() {
     return req.requestSerialNumber?.includes(filters.requestSerialNumber);
   });
 
-  const activeRequests = filteredRequests.filter(r => r.status !== 'converted_to_case' && r.status !== 'archived' && r.status !== 'rejected');
-  const archivedRequests = filteredRequests.filter(r => r.status === 'converted_to_case' || r.status === 'archived' || r.status === 'rejected');
+  const activeRequests = filteredRequests.filter(r => r.status === 'pending_law_review');
+  const archivedRequests = filteredRequests.filter(r => r.status === 'approved_preliminary' || r.status === 'rejected_by_law_firm' || r.status === 'case_closed' || r.status === 'archived');
   const displayedRequests = activeTab === 'active' ? activeRequests : archivedRequests;
 
   const handleArchiveRequest = async (e: React.MouseEvent, reqId: string, reqData: any) => {
@@ -683,25 +674,23 @@ export default function RequestsListPage() {
   };
 
   const getStatusBadge = (status: string, reactivated?: boolean) => {
-    if (status === 'pending' && reactivated) return 'bg-indigo-50 text-indigo-700 border-indigo-100';
+    if (status === 'pending_law_review' && reactivated) return 'bg-indigo-50 text-indigo-700 border-indigo-100';
     switch (status) {
-      case 'pending': return 'bg-amber-50 text-amber-700 border-amber-100';
-      case 'approved_preliminary': return 'bg-indigo-50 text-indigo-700 border-indigo-100/50';
-      case 'approved': 
-      case 'converted_to_case': return 'bg-green-50 text-green-700 border-green-100';
-      case 'rejected': return 'bg-red-50 text-red-700 border-red-100';
+      case 'pending_law_review': return 'bg-amber-50 text-amber-700 border-amber-100';
+      case 'approved_preliminary': return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+      case 'rejected_by_law_firm': return 'bg-rose-50 text-rose-700 border-rose-100';
+      case 'case_closed': return 'bg-slate-50 text-slate-700 border-slate-100';
       default: return 'bg-slate-50 text-slate-700 border-slate-100';
     }
   };
 
   const getStatusIcon = (status: string, reactivated?: boolean) => {
-    if (status === 'pending' && reactivated) return <Clock size={12} />;
+    if (status === 'pending_law_review' && reactivated) return <Clock size={12} />;
     switch (status) {
-      case 'pending': return <Clock size={12} />;
-      case 'approved_preliminary': return <CheckCircle2 size={12} className="text-indigo-400" />;
-      case 'approved': 
-      case 'converted_to_case': return <CheckCircle2 size={12} />;
-      case 'rejected': return <XCircle size={12} />;
+      case 'pending_law_review': return <Clock size={12} />;
+      case 'approved_preliminary': return <CheckCircle2 size={12} className="text-emerald-400" />;
+      case 'rejected_by_law_firm': return <XCircle size={12} className="text-rose-400" />;
+      case 'case_closed': return <CheckCircle2 size={12} className="text-slate-400" />;
       default: return null;
     }
   };
@@ -782,9 +771,10 @@ export default function RequestsListPage() {
               className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-bold text-slate-700"
             >
               <option value="الكل">جميع الحالات</option>
-              <option value="pending">قيد المراجعة</option>
-              <option value="converted_to_case">محول لقضية</option>
-              <option value="rejected">مرفوض</option>
+              <option value="pending_law_review">بانتظار مراجعة المكتب</option>
+              <option value="approved_preliminary">مقبول ومحول لقضية</option>
+              <option value="rejected_by_law_firm">مرفوض من المكتب</option>
+              <option value="case_closed">مغلق ومؤرشف</option>
             </select>
           </div>
 
@@ -854,7 +844,7 @@ export default function RequestsListPage() {
                     }}
                     className={cn(
                       "hover:bg-slate-50/50 transition-all cursor-pointer group",
-                      (req.status === 'archived' || req.status === 'rejected' || req.status === 'converted_to_case') ? "bg-red-50/20 text-rose-900" : "text-slate-700"
+                      (req.status === 'archived' || req.status === 'rejected_by_law_firm' || req.status === 'case_closed') ? "bg-rose-50/10 text-rose-950" : "text-slate-700"
                     )}
                   >
                     <td className="px-6 py-5 text-center">
@@ -903,7 +893,7 @@ export default function RequestsListPage() {
                     </td>
                     <td className="px-6 py-5 text-left">
                       <div className="flex items-center justify-end gap-2">
-                        {req.status !== 'archived' && req.status !== 'converted_to_case' && req.status !== 'rejected' && (
+                        {req.status === 'pending_law_review' && (
                           <button
                             onClick={(e) => handleArchiveRequest(e, req.id, req)}
                             className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
@@ -1167,8 +1157,8 @@ export default function RequestsListPage() {
                       >
                         <option value="" className="text-slate-500">-- اختياري: غير مسند حالياً --</option>
                         {employees.map((emp) => (
-                          <option key={emp.uid} value={emp.uid} className="text-slate-900">
-                            👤 {emp.name} | عبء التكليفات: ({emp.activeRequestsCount}) طلبات نشطة
+                          <option key={emp.uid || emp.id} value={emp.uid || emp.id} className="text-slate-900">
+                            👤 {emp.name || emp.fullName} | عبء التكليفات: ({emp.activeRequestsCount}) طلبات نشطة
                           </option>
                         ))}
                       </select>
@@ -1650,7 +1640,7 @@ export default function RequestsListPage() {
                     )}
 
                     {/* Rejection */}
-                    {selectedRequest.reviewedAt && selectedRequest.status === 'rejected' && (
+                    {selectedRequest.reviewedAt && selectedRequest.status === 'rejected_by_law_firm' && (
                       <div className="relative pr-8">
                          <div className="absolute top-0 right-[-4.5px] w-2 h-2 rounded-full bg-red-500" />
                          <div className="space-y-1">
@@ -1722,7 +1712,7 @@ export default function RequestsListPage() {
 
                 {/* Request Actions */}
                 <div className="pt-10 sticky bottom-0 bg-white pb-8 space-y-3">
-                  {selectedRequest.status === 'pending' && canReviewRequest && (
+                  {selectedRequest.status === 'pending_law_review' && canReviewRequest && (
                     <div className="flex gap-3">
                       <button 
                         onClick={() => setIsApproveModalOpen(true)}
@@ -1730,7 +1720,7 @@ export default function RequestsListPage() {
                         className="flex-1 bg-green-600 text-white rounded-[1.5rem] py-4 font-black transition-all hover:bg-green-700 shadow-xl shadow-green-100 flex items-center justify-center gap-2"
                       >
                         <CheckCircle2 size={20} />
-                        <span>قبول مبدئي</span>
+                        <span>قبول الطلب ومحول لقضية</span>
                       </button>
                       <button 
                         onClick={() => setIsRejectModalOpen(true)}
@@ -1742,27 +1732,7 @@ export default function RequestsListPage() {
                     </div>
                   )}
 
-                  {selectedRequest.status === 'approved_preliminary' && canReviewRequest && (
-                    <div className="space-y-3">
-                      <button 
-                        onClick={() => setIsConvertModalOpen(true)}
-                        disabled={isSubmitting}
-                        className="w-full bg-indigo-600 text-white rounded-[1.5rem] py-4 font-black transition-all hover:bg-indigo-700 shadow-xl shadow-indigo-100 flex items-center justify-center gap-2"
-                      >
-                        <ExternalLink size={20} />
-                        <span>تحويل إلى قضية تنفيذية</span>
-                      </button>
-                      <button 
-                        onClick={() => setIsRejectModalOpen(true)}
-                        disabled={isSubmitting}
-                        className="w-full bg-red-50 text-red-600 rounded-[1.5rem] py-3 text-xs font-black transition-all hover:bg-red-100 flex items-center justify-center gap-2"
-                      >
-                        <span>تغيير القرار إلى رفض</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {selectedRequest.status === 'rejected' && canReactivate && (
+                  {selectedRequest.status === 'rejected_by_law_firm' && canReactivate && (
                     <button 
                       onClick={() => setIsReactivateModalOpen(true)}
                       disabled={isSubmitting}

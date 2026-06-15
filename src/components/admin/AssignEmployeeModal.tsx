@@ -176,8 +176,8 @@ export const AssignEmployeeModal: React.FC<AssignEmployeeModalProps> = ({
                   >
                     <option value="">-- اختر موظف من السلسلة --</option>
                     {employees.map((emp) => (
-                      <option key={emp.uid} value={emp.uid}>
-                        👤 {emp.name} | الطلبات النشطة: ({emp.activeRequestsCount}) {emp.uid === currentEmployeeId ? ' [المعين حالياً]' : ''}
+                      <option key={emp.uid || emp.id} value={emp.uid || emp.id}>
+                        👤 {emp.name || emp.fullName} | الطلبات النشطة: ({emp.activeRequestsCount}) {emp.uid === currentEmployeeId ? ' [المعين حالياً]' : ''}
                       </option>
                     ))}
                   </select>

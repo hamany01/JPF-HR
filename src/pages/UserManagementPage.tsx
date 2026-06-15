@@ -40,7 +40,7 @@ export default function UserManagementPage() {
     email: '',
     phone: '',
     password: '',
-    role: 'employee' as UserType['role'],
+    role: 'company_manager' as UserType['role'],
     telegramChatId: '',
     isActive: true
   });
@@ -87,7 +87,7 @@ export default function UserManagementPage() {
       email: '',
       phone: '',
       password: '',
-      role: 'employee',
+      role: 'company_manager',
       telegramChatId: '',
       isActive: true
     });
@@ -105,7 +105,7 @@ export default function UserManagementPage() {
       phone: user.phone || '',
       telegramChatId: user.telegramChatId || '',
       password: '',
-      role: user.role || 'employee',
+      role: user.role || 'company_manager',
       isActive: user.isActive ?? true
     });
     setIsModalOpen(true);
@@ -164,10 +164,14 @@ export default function UserManagementPage() {
     const toastId = toast.loading('جاري تغيير صلاحيات الدور...');
     try {
       const userRef = doc(db, 'users', user.id);
-      await updateDoc(userRef, {
+      const updatePayload: any = {
         role: newRole,
         updatedAt: serverTimestamp(),
-      });
+      };
+      if (newRole === 'law_manager') {
+        updatePayload.lawFirmId = "LAW-JPF-001";
+      }
+      await updateDoc(userRef, updatePayload);
       toast.success('تم تحديث صلاحية الموظف بنجاح', { id: toastId });
       fetchUsers();
     } catch (error) {
@@ -346,7 +350,7 @@ export default function UserManagementPage() {
         const newUserId = userCredential.user.uid;
 
         console.log('📝 Writing profile to Firestore for new user uid:', newUserId);
-        await setDoc(doc(db, 'users', newUserId), {
+        const userPayload: any = {
           name: formData.name,
           email: formData.email,
           phone: formData.phone || "",
@@ -355,7 +359,11 @@ export default function UserManagementPage() {
           telegramChatId: formData.telegramChatId || "",
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        });
+        };
+        if (formData.role === 'law_manager') {
+          userPayload.lawFirmId = "LAW-JPF-001";
+        }
+        await setDoc(doc(db, 'users', newUserId), userPayload);
 
         // تسجيل الخروج من التطبيق الثانوي المؤقت لتفادي التسجيلات المزدوجة
         await signOut(secondaryAuth);
@@ -366,19 +374,23 @@ export default function UserManagementPage() {
         if (!selectedUserId) return;
         console.log('📝 Modifying existing user profile for id:', selectedUserId);
         const userRef = doc(db, 'users', selectedUserId);
-        await updateDoc(userRef, {
+        const updatePayload: any = {
           name: formData.name,
           phone: formData.phone || "",
           telegramChatId: formData.telegramChatId || "",
           role: formData.role,
           isActive: formData.isActive,
           updatedAt: serverTimestamp(),
-        });
+        };
+        if (formData.role === 'law_manager') {
+          updatePayload.lawFirmId = "LAW-JPF-001";
+        }
+        await updateDoc(userRef, updatePayload);
         setIsModalOpen(false);
         toast.success('تم حفظ التعديلات بنجاح');
       }
       
-      setFormData({ name: '', email: '', phone: '', telegramChatId: '', password: '', role: 'employee', isActive: true });
+      setFormData({ name: '', email: '', phone: '', telegramChatId: '', password: '', role: 'company_manager', isActive: true });
       fetchUsers();
     } catch (error: any) {
       console.error("Error saving user:", error);
@@ -397,7 +409,7 @@ export default function UserManagementPage() {
     setIsModalOpen(false);
     setCreatedUser(null);
     setErrorMsg(null);
-    setFormData({ name: '', email: '', phone: '', password: '', role: 'employee', telegramChatId: '', isActive: true });
+    setFormData({ name: '', email: '', phone: '', password: '', role: 'company_manager', telegramChatId: '', isActive: true });
   };
 
   if (loading) return (
@@ -463,11 +475,8 @@ export default function UserManagementPage() {
                       className="bg-slate-50 border border-slate-150 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none disabled:opacity-60 transition-all font-sans"
                     >
                       <option value="admin">مدير النظام (Admin)</option>
-                      <option value="company_manager">مدير الشركة</option>
-                      <option value="company_assistant">مساعد الشركة</option>
-                      <option value="law_manager">مدير المكتب القانوني</option>
-                      <option value="law_assistant">مساعد قانوني</option>
-                      <option value="employee">موظف عادي</option>
+                      <option value="company_manager">مدير الشركة (Company Manager)</option>
+                      <option value="law_manager">مدير المكتب القانوني (Law Office Manager)</option>
                     </select>
                   </td>
                   <td className="px-6 py-4">
@@ -697,11 +706,8 @@ export default function UserManagementPage() {
                         className="w-full bg-slate-50 border border-slate-150 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none transition-all font-bold text-slate-700 text-xs"
                       >
                         <option value="admin">مدير النظام (Admin)</option>
-                        <option value="company_manager">مدير الشركة</option>
-                        <option value="company_assistant">مساعد الشركة</option>
-                        <option value="law_manager">مدير المكتب القانوني</option>
-                        <option value="law_assistant">مساعد قانوني</option>
-                        <option value="employee">موظف عادي</option>
+                        <option value="company_manager">مدير الشركة (Company Manager)</option>
+                        <option value="law_manager">مدير المكتب القانوني (Law Office Manager)</option>
                       </select>
                     </div>
 

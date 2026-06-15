@@ -53,10 +53,10 @@ export default function CaseDetailsPage() {
   // Normalize user roles for legacy support
   const effectiveRole = profile?.role === 'law_manager' 
     ? 'law_firm_manager' 
-    : (profile?.role === 'law_assistant' ? 'law_firm_assistant' : (profile?.role === 'employee' ? 'sales_employee' : (profile?.role || '')));
+    : (profile?.role || '');
 
-  const canAddItems = ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager', 'law_firm_assistant'].includes(effectiveRole);
-  const canEditCase = ['admin', 'company_manager', 'assistant_manager', 'law_firm_manager'].includes(effectiveRole);
+  const canAddItems = ['admin', 'law_firm_manager'].includes(effectiveRole);
+  const canEditCase = ['admin', 'law_firm_manager'].includes(effectiveRole);
   
   // Subcollections data
   const [tabData, setTabData] = useState<any[]>([]);
@@ -132,20 +132,16 @@ export default function CaseDetailsPage() {
 
         // Role eligibility check
         let authorized = false;
-        if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+        if (role === 'admin') {
           authorized = true;
-        } else if (role === 'sales_employee') {
-          authorized = data.salesEmployeeId === uid;
+        } else if (role === 'company_manager') {
+          authorized = !data.requestCreatedBy || data.requestCreatedBy === uid || data.createdBy === uid;
         } else if (role === 'law_firm_manager') {
-          authorized = !!(userData.lawFirmId && data.lawFirmId === userData.lawFirmId);
-        } else if (role === 'law_firm_assistant') {
-          authorized = data.assignedAssistantId === uid;
+          authorized = data.lawFirmId === 'LAW-JPF-001';
         }
 
         if (!authorized) {
-          const lawFirmMsg = data.lawFirmId ? `المسندة إلى مكتب المحاماة ذو المعرف "${data.lawFirmId}"` : 'غير المسندة لمكتب محاماة معين';
-          const userLawFirmMsg = userData.lawFirmId ? `مكتبك المسجل هو: "${userData.lawFirmId}"` : 'وليس لديك مكتب محاماة مسجل في ملفك الشخصي';
-          setAuthError(`ليس لديك صلاحية للاطلاع على هذه القضية (${lawFirmMsg}، بينما دورك هو شريك إداري ${userLawFirmMsg}). يرجى التأكد من ربط مكتب المحاماة ومطابقته.`);
+          setAuthError(`ليس لديك صلاحية للاطلاع على هذه القضية. يرجى مراجعة المسؤول متبوعاً بمعرف الجلسة.`);
           setLoading(false);
           return;
         }
@@ -246,14 +242,11 @@ export default function CaseDetailsPage() {
 
       // Verify Role Permission
       let authorizedForTransition = false;
-      if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+      if (role === 'admin') {
         authorizedForTransition = true;
       } else if (role === 'law_firm_manager') {
-        if (currentStatus === 'external_assigned' && newStatus === 'in_court') {
-          const pLawFirmId = profile?.lawFirmId || '';
-          if (caseData.lawFirmId && caseData.lawFirmId === pLawFirmId) {
-            authorizedForTransition = true;
-          }
+        if (caseData.lawFirmId === 'LAW-JPF-001') {
+          authorizedForTransition = true;
         }
       }
 
@@ -264,15 +257,13 @@ export default function CaseDetailsPage() {
       // State Machine transitions:
       if (role !== 'admin') {
         let isValidTransition = false;
-        if (currentStatus === 'draft' && newStatus === 'under_review') isValidTransition = true;
-        if (currentStatus === 'under_review' && (newStatus === 'internal' || newStatus === 'external_assigned')) isValidTransition = true;
-        if ((currentStatus === 'internal' || currentStatus === 'external_assigned') && newStatus === 'in_court') isValidTransition = true;
+        if (currentStatus === 'external_assigned' && newStatus === 'in_court') isValidTransition = true;
         if (currentStatus === 'in_court' && newStatus === 'closed') isValidTransition = true;
 
         if (currentStatus === newStatus) isValidTransition = true;
 
         if (!isValidTransition) {
-          throw new Error(`انتقال غير مسموح به من حالة (${currentStatus}) إلى حالة (${newStatus}). تسلسل المراحل: مسودة ← تحت المراجعة ← داخلية/إسناد خارجي ← بالمحكمة ← مغلقة`);
+          throw new Error(`انتقال غير مسموح به من حالة (${currentStatus}) إلى حالة (${newStatus}). تسلسل المراحل المعتمدة: مسند للمكتب ← بالمحكمة ← مغلقة`);
         }
       }
 
@@ -314,12 +305,38 @@ export default function CaseDetailsPage() {
         }
       }
 
-      // Perform update
+      // Perform update based on closing automation & archive
       const caseDocRef = doc(db, 'cases', caseId);
-      await updateDoc(caseDocRef, {
-        status: newStatus,
-        updatedAt: serverTimestamp()
-      });
+      if (newStatus === 'closed') {
+        // 1. Update linked request
+        if (caseData.sourceRequestId) {
+          const requestRef = doc(db, 'requests', caseData.sourceRequestId);
+          await updateDoc(requestRef, {
+            status: 'case_closed',
+            statusLabel: 'مغلق ومؤرشف من القضية',
+            updatedAt: serverTimestamp()
+          });
+        }
+
+        // 2. Mark case attachments as archived
+        const updatedAttachments = (caseData.attachments || []).map((att: any) => ({
+          ...att,
+          archived: true
+        }));
+
+        await updateDoc(caseDocRef, {
+          status: 'closed',
+          statusLabel: 'مغلقة',
+          attachments: updatedAttachments,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        await updateDoc(caseDocRef, {
+          status: newStatus,
+          statusLabel: newStatus === 'in_court' ? 'بالمحكمة' : 'مسندة للمكتب القانوني',
+          updatedAt: serverTimestamp()
+        });
+      }
 
       // Add system log event
       await addDoc(collection(db, 'appEvents'), {
@@ -1120,7 +1137,7 @@ export default function CaseDetailsPage() {
                 <p className="text-xs text-slate-400 font-medium mt-0.5">إدارة وتتبع كافة العمليات في هذا القسم</p>
               </div>
             </div>
-            {canAddItems && activeTab !== 'finance' && (
+            {canAddItems && activeTab !== 'finance' && !(activeTab === 'documents' && caseData.status === 'closed') && (
               <button 
                 onClick={() => setIsAddModalOpen(true)}
                 className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl text-sm font-bold hover:bg-slate-800 transition-all shadow-xl"

@@ -43,10 +43,14 @@ export function useEmployees() {
     const unsubscribeUsers = onSnapshot(
       usersQuery,
       (snapshot) => {
-        usersList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as UserProfile[];
+        usersList = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            uid: data.uid || doc.id,
+            ...data,
+          };
+        }) as UserProfile[];
         updateCombinedState();
         setError(null);
         setLoading(false);

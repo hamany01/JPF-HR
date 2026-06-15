@@ -69,7 +69,7 @@ export default function CasesListPage() {
   ]);
 
   // Check if user has permission to add cases
-  const canAddCase = ['admin', 'company_manager', 'assistant_manager'].includes(profile?.role || '');
+  const canAddCase = ['admin'].includes(profile?.role || '');
 
   const fetchCases = async () => {
     setLoading(true);
@@ -82,41 +82,15 @@ export default function CasesListPage() {
       }
       
       let role = profile?.role || '';
-      // Backwards compatibility normalization
-      if (role === 'law_manager') {
-        role = 'law_firm_manager';
-      } else if (role === 'law_assistant') {
-        role = 'law_firm_assistant';
-      } else if (role === 'employee') {
-        role = 'sales_employee';
-      } else if (role === 'company_assistant') {
-        role = 'assistant_manager';
-      }
-
       const uid = activeUser.uid;
       let q;
 
-      if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
+      if (role === 'admin') {
         q = query(collection(db, 'cases'));
-      } else if (role === 'sales_employee') {
-        q = query(collection(db, 'cases'), where('salesEmployeeId', '==', uid));
+      } else if (role === 'company_manager') {
+        q = query(collection(db, 'cases'), where('requestCreatedBy', '==', uid));
       } else if (role === 'law_firm_manager') {
-        const pLawFirmId = profile?.lawFirmId || '';
-        if (!pLawFirmId) {
-          console.warn("⚠️ تحذير: حساب مدير مكتب المحاماة (law_firm_manager) لا يمتلك معرف مكتب محاماة lawFirmId في ملفه الشخصي!");
-        }
-        q = query(
-          collection(db, 'cases'),
-          where('lawFirmId', '==', pLawFirmId),
-          where('assignmentType', '==', 'external'),
-          where('isDeleted', '==', false)
-        );
-      } else if (role === 'law_firm_assistant') {
-        q = query(
-          collection(db, 'cases'),
-          where('assignedAssistantId', '==', uid),
-          where('isDeleted', '==', false)
-        );
+        q = query(collection(db, 'cases'), where('lawFirmId', '==', 'LAW-JPF-001'));
       } else {
         setCases([]);
         setLoading(false);
@@ -126,15 +100,9 @@ export default function CasesListPage() {
       const snapshot = await getDocs(q);
       let docs = snapshot.docs.map(doc => ({ id: doc.id, caseId: doc.id, ...(doc.data() as any) }));
 
-      // Filter by isDeleted (double-check in-memory for safety)
-      const isAdminRole = ['admin', 'company_manager', 'assistant_manager'].includes(role);
+      // Filter by isDeleted
       docs = docs.filter((c: any) => {
-        const hasIsDeleted = 'isDeleted' in c && c.isDeleted !== undefined;
-        if (hasIsDeleted) {
-          return c.isDeleted !== true;
-        } else {
-          return isAdminRole || role === 'law_firm_manager' || role === 'law_firm_assistant';
-        }
+        return c.isDeleted !== true;
       });
 
       // Apply client-side filtering safely over search and options

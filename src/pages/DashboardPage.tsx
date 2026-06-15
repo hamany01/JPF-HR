@@ -91,7 +91,15 @@ export default function DashboardPage() {
     fetchAllUsers();
     
     // Listen to requests
-    const qRequests = query(collection(db, 'requests'), orderBy('createdAt', 'desc'));
+    let qRequests;
+    if (profile?.role === 'company_manager') {
+      qRequests = query(collection(db, 'requests'), where('createdBy', '==', user?.uid));
+    } else if (profile?.role === 'law_firm_manager' || profile?.role === 'law_manager') {
+      qRequests = query(collection(db, 'requests'), where('lawFirmId', '==', 'LAW-JPF-001'));
+    } else {
+      qRequests = query(collection(db, 'requests'));
+    }
+
     const unsubscribeRequests = onSnapshot(qRequests, (snapshot) => {
       setRequests(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
@@ -100,37 +108,19 @@ export default function DashboardPage() {
     let role = profile?.role || '';
     if (role === 'law_manager') {
       role = 'law_firm_manager';
-    } else if (role === 'law_assistant') {
-      role = 'law_firm_assistant';
-    } else if (role === 'employee') {
-      role = 'sales_employee';
-    } else if (role === 'company_assistant') {
-      role = 'assistant_manager';
     }
 
     const uid = user?.uid || '';
     let qCases;
 
-    if (role === 'admin' || role === 'company_manager' || role === 'assistant_manager') {
-      qCases = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
-    } else if (role === 'sales_employee') {
-      qCases = query(collection(db, 'cases'), where('salesEmployeeId', '==', uid));
+    if (role === 'admin') {
+      qCases = query(collection(db, 'cases'));
+    } else if (role === 'company_manager') {
+      qCases = query(collection(db, 'cases'), where('requestCreatedBy', '==', uid));
     } else if (role === 'law_firm_manager') {
-      const pLawFirmId = profile?.lawFirmId || '';
-      qCases = query(
-        collection(db, 'cases'),
-        where('lawFirmId', '==', pLawFirmId),
-        where('assignmentType', '==', 'external'),
-        where('isDeleted', '==', false)
-      );
-    } else if (role === 'law_firm_assistant') {
-      qCases = query(
-        collection(db, 'cases'),
-        where('assignedAssistantId', '==', uid),
-        where('isDeleted', '==', false)
-      );
+      qCases = query(collection(db, 'cases'), where('lawFirmId', '==', 'LAW-JPF-001'));
     } else {
-      qCases = null;
+      qCases = query(collection(db, 'cases'));
     }
 
     let unsubscribeCases = () => {};
@@ -171,8 +161,8 @@ export default function DashboardPage() {
   }, [user, profile, authLoading]);
 
   // Compute Stats
-  const activeRequests = requests.filter(r => ['pending', 'approved_preliminary'].includes(r.status));
-  const inProgressCases = cases.filter(c => c.status === 'in_progress');
+  const activeRequests = requests.filter(r => r.status === 'pending_law_review');
+  const inProgressCases = cases.filter(c => c.status === 'external_assigned' || c.status === 'in_court');
   const totalClaimAmount = cases.reduce((acc, c) => acc + (c.claimAmount || 0), 0);
   const totalReceivedAmount = cases.reduce((acc, c) => acc + (c.receivedAmount || 0), 0);
   const collectionRate = totalClaimAmount > 0 ? (totalReceivedAmount / totalClaimAmount) * 100 : 0;
@@ -184,10 +174,10 @@ export default function DashboardPage() {
     return createdAt && createdAt < sevenDaysAgo;
   });
 
-  const convertedRequests = requests.filter(r => r.status === 'converted_to_case' && r.convertedAt && r.createdAt);
+  const convertedRequests = requests.filter(r => r.status === 'approved_preliminary' && r.approvedPreliminaryAt && r.createdAt);
   const avgConversionTime = convertedRequests.length > 0 
     ? convertedRequests.reduce((acc, r) => {
-        const convMillis = (r.convertedAt && 'toMillis' in r.convertedAt) ? r.convertedAt.toMillis() : 0;
+        const convMillis = (r.approvedPreliminaryAt && 'toMillis' in r.approvedPreliminaryAt) ? r.approvedPreliminaryAt.toMillis() : 0;
         const createMillis = (r.createdAt && 'toMillis' in r.createdAt) ? r.createdAt.toMillis() : 0;
         const diff = (convMillis - createMillis) / (1000 * 60 * 60 * 24);
         return acc + diff;
@@ -211,7 +201,7 @@ export default function DashboardPage() {
     }).length;
 
     const convertedInMonth = requests.filter(r => {
-      const date = r.convertedAt?.toDate();
+      const date = r.approvedPreliminaryAt?.toDate();
       return date && date >= monthStart && date <= monthEnd;
     }).length;
 

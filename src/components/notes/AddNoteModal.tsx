@@ -185,8 +185,8 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({ isOpen, onClose, onA
                     >
                       <option value="">-- اختر موظفاً --</option>
                       {employees.map((emp) => (
-                        <option key={emp.uid} value={emp.uid}>
-                          👤 {emp.name} | عبء التكليفات: {emp.activeRequestsCount} طلبات نشطة
+                        <option key={emp.uid || emp.id} value={emp.uid || emp.id}>
+                          👤 {emp.name || emp.fullName} | عبء التكليفات: {emp.activeRequestsCount} طلبات نشطة
                         </option>
                       ))}
                     </select>
