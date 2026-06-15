@@ -7,17 +7,16 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function getUserData() {
-      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return exists(userPath) ? get(userPath).data : null;
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
 
     function hasRole(roles) {
-      let data = getUserData();
-      return isSignedIn() && data != null && (
-        roles.hasAny([data.role]) ||
-        (data.role == 'law_manager' && roles.hasAny(['law_firm_manager']))
-      );
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          getUserRole() in roles ||
+          (getUserRole() == 'law_manager' && 'law_firm_manager' in roles)
+        );
     }
 
     function isAdmin() {
@@ -134,7 +133,12 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         isAdmin() ||
         (isCompanyManager() && resource.data.createdBy == request.auth.uid && resource.data.status == 'pending_law_review') ||
-        (isLawManager() && (!('lawFirmId' in resource.data) || resource.data.lawFirmId == 'LAW-JPF-001'))
+        (isLawManager() && (
+          resource.data.status == 'pending_law_review' && (
+            !('lawFirmId' in resource.data) || 
+            resource.data.lawFirmId == 'LAW-JPF-001'
+          )
+        ))
       );
       
       allow delete: if isSignedIn() && isAdmin();

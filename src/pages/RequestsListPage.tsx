@@ -550,11 +550,14 @@ export default function RequestsListPage() {
       console.error("Detailed error approving request:", error);
       const errorMessage = error?.message || String(error);
       const errorCode = error?.code || '';
+      const isPermissionDenied = errorCode === 'permission-denied' || 
+                                 errorMessage.toLowerCase().includes('permission-denied') || 
+                                 errorMessage.toLowerCase().includes('permission denied');
       
-      if (errorCode === 'permission-denied' || errorMessage.includes('permission-denied') || errorMessage.includes('Permission denied')) {
-        alert(`ليس لديك صلاحية لإتمام هذه العملية (تفاصيل: قد تكون صلاحيات حسابك كمدير مكتب غير مطابقة للمكتب المحدد LAW-JPF-001 أو هناك مشكلة في قواعد قواعد البيانات لقاعدة Firestore).`);
+      if (isPermissionDenied) {
+        alert(`Firestore PERMISSION_DENIED: ليس لديك صلاحية لإتمام هذه العملية (كود الخطأ: ${errorCode}). الرجاء التأكد من صلاحيات حسابك كمدير مكتب وأن المحرك يطابق مواصفات المكتب LAW-JPF-001 أو مراجعة قواعد البيانات.`);
       } else {
-        alert(`حدث خطأ أثناء القبول المبدئي والتحويل لقضية. التفاصيل: ${errorMessage}`);
+        alert(`فشل إتمام العملية بسبب خطأ في البيانات أو أثناء التحديث. التفاصيل: ${errorMessage}`);
       }
     } finally {
       setIsSubmitting(false);
