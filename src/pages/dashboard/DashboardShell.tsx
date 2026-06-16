@@ -3,6 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import EmployeeDashboard from './EmployeeDashboard';
 import DashboardPage from '../DashboardPage'; // اللوحة العامة الحالية للمديرين والأدمن
+import LawFirmDashboard from './LawFirmDashboard'; // لوحة مكتب المحاماة الجديدة للمحامي
 import { Loader2, ShieldAlert } from 'lucide-react';
 
 export default function DashboardShell() {
@@ -29,11 +30,18 @@ export default function DashboardShell() {
   // توجيه ذكي حسب دور المعرف للتطبيق
   switch (role) {
     case 'admin':
-    case 'law_manager':
     case 'company_manager':
       // المدراء والمسؤولون الكبار يوجهون للوحة الشاملة الأكبر للتداول المالي والإدارة
       return <DashboardPage />;
     
+    case 'law_firm_manager':
+    case 'law_manager':
+      // لوحة التحكم المخصصة لمكتب المحاماة والمحامين
+      return <LawFirmDashboard />;
+    
+    case 'sales_employee':
+    case 'law_firm_assistant':
+    case 'assistant_manager':
     case 'employee':
     case 'law_assistant':
     case 'company_assistant':
