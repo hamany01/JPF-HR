@@ -663,8 +663,16 @@ export default function RequestsListPage() {
     return req.requestSerialNumber?.includes(filters.requestSerialNumber);
   });
 
-  const activeRequests = filteredRequests.filter(r => r.status === 'pending_law_review');
-  const archivedRequests = filteredRequests.filter(r => r.status === 'approved_preliminary' || r.status === 'rejected_by_law_firm' || r.status === 'case_closed' || r.status === 'archived');
+  const activeRequests = filteredRequests.filter(r => 
+    r.status === 'pending_law_review' || 
+    r.status === 'approved_preliminary'
+  );
+  const archivedRequests = filteredRequests.filter(r => 
+    r.status === 'case_closed' || 
+    r.status === 'rejected_by_law_firm' || 
+    r.status === 'archived' ||
+    r.statusLabel === 'مغلق ومؤرشف من القضية'
+  );
   const displayedRequests = activeTab === 'active' ? activeRequests : archivedRequests;
 
   const handleArchiveRequest = async (e: React.MouseEvent, reqId: string, reqData: any) => {
