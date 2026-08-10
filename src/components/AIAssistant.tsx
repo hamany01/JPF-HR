@@ -180,16 +180,32 @@ export default function AIAssistant() {
             {/* Quick Actions */}
             <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex gap-2 flex-wrap">
               <button
+                onClick={() => { setInput('اعطني نظرة شاملة عن كل إمكانياتك'); sendMessage(); }}
+                disabled={loading}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                <Sparkles size={14} />
+                إمكانياتي
+              </button>
+              <button
                 onClick={runAnalysis}
                 disabled={analysisLoading}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 transition-all disabled:opacity-50 cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:border-emerald-200 transition-all disabled:opacity-50 cursor-pointer"
               >
                 {analysisLoading ? <Loader2 size={14} className="animate-spin" /> : <TrendingUp size={14} />}
                 تحليل شامل
               </button>
               <button
+                onClick={() => { setInput('ايش الخانات الفاضية في النظام؟'); sendMessage(); }}
+                disabled={loading}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-amber-50 hover:border-amber-200 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                <AlertCircle size={14} />
+                خانات فاضية
+              </button>
+              <button
                 onClick={sendTelegramReport}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 transition-all cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-blue-50 hover:border-blue-200 transition-all cursor-pointer"
               >
                 <MessageSquare size={14} />
                 تقرير تيليجرام
