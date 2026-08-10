@@ -63,6 +63,12 @@ export default function AIAssistant() {
         body: JSON.stringify({ message: userMessage.content }),
       });
 
+      // Check if response is JSON
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('استجابة غير صالحة من الخادم. تأكد من تشغيل Ollama على VPS.');
+      }
+
       const data = await response.json();
       
       if (data.success) {
@@ -79,9 +85,12 @@ export default function AIAssistant() {
         }]);
       }
     } catch (error: any) {
+      const errMsg = error.name === 'AbortError' 
+        ? '⏱️ انتهى وقت الانتظار. خادم الذكاء الاصطناعي يستغرق وقتاً طويلاً. حاول مرة أخرى.'
+        : `❌ خطأ: ${error.message}`;
       setMessages(prev => [...prev, {
         role: 'agent',
-        content: `❌ خطأ في الاتصال: ${error.message}`,
+        content: errMsg,
         timestamp: new Date().toISOString(),
       }]);
     } finally {
@@ -96,6 +105,12 @@ export default function AIAssistant() {
       const response = await fetch('/api/ai/analyze', {
         headers: { 'Authorization': `Bearer ${token}` },
       });
+      
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('استجابة غير صالحة من الخادم.');
+      }
+      
       const data = await response.json();
       if (data.success) {
         setAnalysis(data.data);
