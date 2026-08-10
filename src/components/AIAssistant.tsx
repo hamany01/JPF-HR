@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Bot, Send, X, Sparkles, AlertCircle, TrendingUp, Loader2, MessageSquare } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { db } from '../firebase/config';
+import { collection, getDocs } from 'firebase/firestore';
 
 interface ChatMessage {
   role: 'user' | 'agent';
@@ -54,13 +56,34 @@ export default function AIAssistant() {
 
     try {
       const token = await user?.getIdToken();
+      if (!token) throw new Error('يجب تسجيل الدخول أولاً');
+
+      // Fetch real system stats from Firestore via Firebase SDK (works in browser)
+      let systemStats: any = null;
+      try {
+        const [casesSnap, requestsSnap, paymentsSnap, usersSnap] = await Promise.all([
+          getDocs(collection(db, 'cases')),
+          getDocs(collection(db, 'requests')),
+          getDocs(collection(db, 'payment_plans')),
+          getDocs(collection(db, 'users')),
+        ]);
+        systemStats = {
+          totalCases: casesSnap.size,
+          totalRequests: requestsSnap.size,
+          totalPayments: paymentsSnap.size,
+          totalUsers: usersSnap.size,
+        };
+      } catch (e) {
+        console.warn('[AI] Stats fetch failed:', e);
+      }
+
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ message: userMessage.content }),
+        body: JSON.stringify({ message: userMessage.content, systemStats }),
       });
 
       // Check if response is JSON
