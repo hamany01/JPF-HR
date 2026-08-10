@@ -100,30 +100,57 @@ export default function AIAssistant() {
 
   const runAnalysis = async () => {
     setAnalysisLoading(true);
+    setMessages(prev => [...prev, {
+      role: 'user',
+      content: 'تحليل شامل',
+      timestamp: new Date().toISOString(),
+    }]);
     try {
       const token = await user?.getIdToken();
+      if (!token) {
+        throw new Error('يجب تسجيل الدخول أولاً');
+      }
+      
+      // Add 90-second timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 90000);
+      
       const response = await fetch('/api/ai/analyze', {
         headers: { 'Authorization': `Bearer ${token}` },
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
       
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        throw new Error('استجابة غير صالحة من الخادم.');
+        throw new Error('استجابة غير صالحة من الخادم');
       }
       
       const data = await response.json();
       if (data.success) {
         setAnalysis(data.data);
+        const criticalCount = data.data.emptyFieldsReport.filter((r: any) => r.severity === 'critical').length;
+        const warningCount = data.data.emptyFieldsReport.filter((r: any) => r.severity === 'warning').length;
         setMessages(prev => [...prev, {
           role: 'agent',
-          content: `📊 **تحليل شامل للنظام**\n\n${data.data.summary}\n\n🔴 خانات فاضية حرجة: ${data.data.emptyFieldsReport.filter((r: any) => r.severity === 'critical').length}\n🟡 خانات فاضية تحذيرية: ${data.data.emptyFieldsReport.filter((r: any) => r.severity === 'warning').length}\n⚠️ اختناقات سير العمل: ${data.data.workflowBottlenecks.length}\n\n💡 **توصيات:**\n${data.data.recommendations.slice(0, 5).join('\n')}`,
+          content: `📊 تحليل شامل للنظام\n\n${data.data.summary}\n\n🔴 خانات فاضية حرجة: ${criticalCount}\n🟡 خانات فاضية تحذيرية: ${warningCount}\n⚠️ اختناقات سير العمل: ${data.data.workflowBottlenecks.length}\n\n💡 توصيات:\n${data.data.recommendations.slice(0, 5).join('\n')}`,
+          timestamp: new Date().toISOString(),
+        }]);
+      } else {
+        setMessages(prev => [...prev, {
+          role: 'agent',
+          content: `❌ ${data.message || 'فشل التحليل'}`,
           timestamp: new Date().toISOString(),
         }]);
       }
     } catch (error: any) {
+      const errMsg = error.name === 'AbortError'
+        ? '⏱️ انتهى وقت التحليل. خادم الذكاء الاصطناعي يستغرق وقتاً. حاول مرة أخرى.'
+        : `❌ فشل التحليل: ${error.message}`;
       setMessages(prev => [...prev, {
         role: 'agent',
-        content: `❌ فشل التحليل: ${error.message}`,
+        content: errMsg,
         timestamp: new Date().toISOString(),
       }]);
     } finally {
