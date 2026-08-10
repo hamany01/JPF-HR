@@ -2,10 +2,8 @@
  * AI Agent Service — JPF-HR
  * 
  * وكيل ذكاء اصطناعي يراقب المنصة، يحلل البيانات، ويقدم توصيات
- * يستخدم Google Gemini AI (الموجود مسبقاً في المشروع)
+ * يستخدم Ollama API (متوافق مع OpenAI API)
  */
-
-import { GoogleGenAI } from '@google/genai';
 
 // ============================================================
 // AI Agent Configuration
@@ -34,19 +32,9 @@ const SYSTEM_PROMPT = `أنت "وكيل JPF" — مساعد ذكاء اصطنا�
 - 🟢 معلومة: للعلم فقط
 - 💡 توصية: اقتراح تحسين`;
 
-// Initialize Gemini AI
-let aiInstance: GoogleGenAI | null = null;
-
-function getAI(): GoogleGenAI {
-  if (!aiInstance) {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY not configured. Set it in environment variables.');
-    }
-    aiInstance = new GoogleGenAI({ apiKey });
-  }
-  return aiInstance;
-}
+// Ollama configuration
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://187.77.66.234:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'glm4:9b';
 
 // ============================================================
 // Types
@@ -88,7 +76,7 @@ export interface WorkflowBottleneck {
 }
 
 // ============================================================
-// AI Chat Service
+// Ollama Chat Service
 // ============================================================
 
 export async function chatWithAgent(
@@ -100,30 +88,55 @@ export async function chatWithAgent(
   }
 ): Promise<string> {
   try {
-    const ai = getAI();
-    
-    // Build context-aware prompt
-    let contextPrompt = SYSTEM_PROMPT;
+    // Build context-aware system prompt
+    let fullSystemPrompt = SYSTEM_PROMPT;
     if (context?.userRole) {
-      contextPrompt += `\n\nمعلومات المستخدم الحالي:\n- الاسم: ${context.userName || 'غير معروف'}\n- الدور: ${context.userRole}`;
+      fullSystemPrompt += `\n\nمعلومات المستخدم الحالي:\n- الاسم: ${context.userName || 'غير معروف'}\n- الدور: ${context.userRole}`;
     }
     if (context?.systemStats) {
-      contextPrompt += `\n\nإحصائيات النظام الحالية:\n${JSON.stringify(context.systemStats, null, 2)}`;
+      fullSystemPrompt += `\n\nإحصائيات النظام الحالية:\n${JSON.stringify(context.systemStats, null, 2)}`;
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: message,
-      config: {
-        systemInstruction: contextPrompt,
-        temperature: 0.7,
-        maxOutputTokens: 2048,
-      },
+    // Use Ollama's OpenAI-compatible API
+    const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        messages: [
+          { role: 'system', content: fullSystemPrompt },
+          { role: 'user', content: message },
+        ],
+        stream: false,
+        options: {
+          temperature: 0.7,
+          num_predict: 1024,
+        },
+      }),
+      signal: AbortSignal.timeout(120000), // 2 minute timeout
     });
 
-    return response.text || 'عذراً، لم أتمكن من توليد رد. حاول مرة أخرى.';
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Ollama API error (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    const content = data?.message?.content || data?.response || '';
+    
+    if (!content || content.trim().length === 0) {
+      return 'عذراً، لم أتمكن من توليد رد. حاول مرة أخرى.';
+    }
+    
+    return content;
   } catch (error: any) {
     console.error('[AI Agent] Chat error:', error);
+    
+    // If it's a network error, provide helpful message
+    if (error.name === 'AbortError' || error.code === 'ECONNREFUSED') {
+      return '❌ لا يمكنني الاتصال بخادم الذكاء الاصطناعي (Ollama). تأكد من أن الخادم يعمل على VPS.';
+    }
+    
     return `❌ حدث خطأ: ${error.message || 'خطأ غير معروف'}`;
   }
 }
@@ -136,7 +149,7 @@ export async function analyzeEmptyFields(db: any): Promise<EmptyFieldReport[]> {
   const reports: EmptyFieldReport[] = [];
   
   // Critical fields that should never be empty
-  const criticalFields = {
+  const criticalFields: Record<string, string[]> = {
     cases: ['clientName', 'amountClaimed', 'status', 'assignmentType'],
     requests: ['createdBy', 'status'],
     payment_plans: ['caseId', 'installmentAmount', 'dueDate', 'status'],
@@ -144,7 +157,7 @@ export async function analyzeEmptyFields(db: any): Promise<EmptyFieldReport[]> {
   };
 
   // Optional but recommended fields
-  const recommendedFields = {
+  const recommendedFields: Record<string, string[]> = {
     cases: ['clientId', 'lawFirmId', 'salesEmployeeId', 'assignedAssistantId'],
     requests: ['requestCreatedBy', 'lawFirmId'],
     payment_plans: ['notes', 'paidAmount'],
@@ -182,7 +195,6 @@ export async function analyzeEmptyFields(db: any): Promise<EmptyFieldReport[]> {
           !data[field] || data[field] === '' || data[field] === null || data[field] === undefined
         );
         if (missing.length > 0) {
-          // Check if this document already has a critical report
           const existing = reports.find(r => r.collection === collection && r.documentId === doc.id);
           if (existing) {
             existing.missingFields.push(...missing);
@@ -236,7 +248,7 @@ export async function analyzeWorkflow(db: any): Promise<WorkflowBottleneck[]> {
       if (count > 5) {
         bottlenecks.push({
           stage: stage.name,
-          averageTimeDays: 0, // Would need timestamp analysis
+          averageTimeDays: 0,
           count,
           suggestion: `${stage.suggestion} (${count} قضية في هذه المرحلة)`,
         });
