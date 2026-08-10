@@ -1,11 +1,13 @@
 {
   "functions": {
     "api/ai/chat.ts": { "maxDuration": 60 },
-    "api/ai/analyze.ts": { "maxDuration": 60 }
+    "api/ai/analyze.ts": { "maxDuration": 60 },
+    "api/ai/telegram-report.ts": { "maxDuration": 30 }
   },
   "rewrites": [
     { "source": "/api/ai/chat", "destination": "/api/ai/chat" },
     { "source": "/api/ai/analyze", "destination": "/api/ai/analyze" },
+    { "source": "/api/ai/telegram-report", "destination": "/api/ai/telegram-report" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
