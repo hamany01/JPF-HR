@@ -65,26 +65,57 @@ export default function LoginPage() {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
 
+      // SECURITY FIX: Email domain whitelist — only authorized domains can self-register.
+      // Add your company domains below, or set VITE_ALLOWED_EMAIL_DOMAINS env var (comma-separated).
+      const allowedDomains = (import.meta.env.VITE_ALLOWED_EMAIL_DOMAINS || '')
+        .split(',')
+        .map((d: string) => d.trim().toLowerCase())
+        .filter(Boolean);
+
+      if (allowedDomains.length > 0) {
+        const emailDomain = (user.email || '').split('@')[1]?.toLowerCase() || '';
+        if (!allowedDomains.includes(emailDomain)) {
+          // Sign out the unauthorized user immediately
+          await auth.signOut();
+          setError(`غير مصرح: النطاق "${emailDomain}" غير مسموح به. تواصل مع مدير النظام.`);
+          return;
+        }
+      }
+
       // التأكد من تسجيل المستخدم بقاعدة البيانات Firestore
       const userRef = doc(db, 'users', user.uid);
       const userDoc = await getDoc(userRef);
 
       if (!userDoc.exists()) {
+        // SECURITY FIX: New Google users get 'employee' role and must be activated by admin.
+        // They cannot self-assign admin or privileged roles.
         await setDoc(userRef, {
           name: user.displayName || 'Unnamed User',
           email: user.email,
           phone: '',
           role: 'employee',
-          isActive: true,
+          isActive: false, // SECURITY FIX: New users are inactive until an admin activates them
           telegramChatId: '',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+        setError('تم إنشاء حسابك بنجاح. يرجى التواصل مع مدير النظام لتفعيل حسابك.');
+        await auth.signOut();
+        return;
+      }
+
+      // Check if user account is active
+      const existingData = userDoc.data();
+      if (existingData.isActive === false) {
+        await auth.signOut();
+        setError('حسابك غير مفعّل. يرجى التواصل مع مدير النظام لتفعيل حسابك.');
+        return;
       }
 
       navigate('/');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login failed:', error);
+      setError('فشل تسجيل الدخول عبر Google');
     }
   };
 

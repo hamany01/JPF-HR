@@ -14,6 +14,7 @@
     "import-cases-text": "tsx scripts/import_cases_from_text.ts",
     "import-cases-from-csv": "tsx scripts/import_cases_from_csv.ts",
     "seed-permissions": "tsx scripts/seed_roles_permissions.ts",
+    "setup-admin": "tsx scripts/setup_first_admin.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

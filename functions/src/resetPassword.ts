@@ -23,7 +23,7 @@ export const resetUserPassword = functions
 
       const { userId, newPassword } = data || {};
 
-      if (!userId || !newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      if (!userId || !newPassword || typeof newPassword !== 'string' || newPassword.length < 12) {
         throw new functions.https.HttpsError('invalid-argument', 'بيانات غير صحيحة');
       }
 

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, updateDoc, serverTimestamp, collection, query, where, getDocs, limit } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { UserProfile } from '../types/user';
 
@@ -31,39 +31,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  /**
-   * منطق تعيين أول أدمن تلقائياً:
-   * يتحقق مما إذا كان المعرف الحالي يفتقر لصلاحية admin، 
-   * فإذا لم يجد أي مسؤول آخر في النظام، يقوم بترقية المستخدم الحالي.
-   */
-  const bootstrapAdminIfNeeded = async (uid: string, currentProfile: any) => {
-    if (currentProfile?.role === 'admin') return;
-
-    try {
-      // البحث عن أي مستخدم يملك دور admin
-      const adminQuery = query(
-        collection(db, 'users'), 
-        where('role', '==', 'admin'), 
-        limit(1)
-      );
-      const adminSnapshot = await getDocs(adminQuery);
-
-      // إذا لم يوجد أي أدمن في النظام، قم بترقية المستخدم الحالي
-      if (adminSnapshot.empty) {
-        console.log("No admin found in system. Promoting current user to admin...");
-        const userRef = doc(db, 'users', uid);
-        const updateData = {
-          role: 'admin',
-          isActive: true,
-          updatedAt: serverTimestamp(),
-        };
-        await updateDoc(userRef, updateData);
-      }
-    } catch (error) {
-      console.error("Error in admin bootstrap:", error);
-    }
-  };
-
   useEffect(() => {
     let unsubscribeProfile: (() => void) | null = null;
 
@@ -91,10 +58,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             
             setProfile(profileData);
             
-            // Bootstrap admin if this is the first user (only if not already admin)
-            if (profileData.role !== 'admin') {
-              bootstrapAdminIfNeeded(authenticatedUser.uid, profileData);
-            }
+            // SECURITY FIX: Removed bootstrapAdminIfNeeded — auto-promoting any user to admin
+            // when no admin exists is a critical privilege escalation vulnerability.
+            // Admin accounts must be created manually via the admin console or a secure setup script.
           } else {
             setProfile(null);
           }

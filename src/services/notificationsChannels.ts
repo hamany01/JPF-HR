@@ -397,10 +397,18 @@ async function sendTelegramMessage(
  * Keep the old manual notification functions as fallback or utility
  */
 export async function sendTelegramNotification(message: string): Promise<void> {
+  // SECURITY FIX: Telegram Bot Token should be stored in Firestore notificationSettings (admin-configured)
+  // or server-side env only. The VITE_ prefix exposes it to the browser.
   const botToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
   const chatId = import.meta.env.VITE_TELEGRAM_CHAT_ID;
 
-  if (!botToken || !chatId) return;
+  // SECURITY NOTE: This fallback is for development only. In production, 
+  // all Telegram notifications should go through the server-side API endpoint
+  // which reads the bot token from server-side environment variables.
+  if (!botToken || !chatId) {
+    console.warn('[Telegram] Bot token not configured. Skipping notification.');
+    return;
+  }
 
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
   try {

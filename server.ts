@@ -19,34 +19,97 @@ process.on('uncaughtException', (err, origin) => {
 const app = express();
 const PORT = 3000;
 
+// ============================================================
+// SECURITY FIX: CORS Configuration
+// ============================================================
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o: string) => o.trim())
+  .filter(Boolean);
+
+app.use((req, res, next) => {
+  // SECURITY FIX: Proper CORS handling
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.length === 0) {
+    // Development mode: allow same-origin
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  } else if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Requested-With');
+  res.setHeader('Access-Control-Max-Age', '86400');
+
+  // SECURITY FIX: Security headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
+  next();
+});
+
+// ============================================================
+// SECURITY FIX: Simple Rate Limiting
+// ============================================================
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const RATE_LIMIT_MAX_AUTH = 10; // 10 attempts per 15 min for auth endpoints
+const RATE_LIMIT_MAX_API = 300; // 300 requests per 15 min for general API
+
+function rateLimit(max: number) {
+  return (req: any, res: any, next: any) => {
+    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').toString();
+    const key = `${ip}:${req.path}`;
+    const now = Date.now();
+    
+    const record = rateLimitMap.get(key);
+    
+    if (!record || now > record.resetTime) {
+      rateLimitMap.set(key, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+      return next();
+    }
+    
+    record.count++;
+    if (record.count > max) {
+      return res.status(429).json({ 
+        success: false, 
+        message: 'تم تجاوز الحد المسموح من الطلبات. حاول مرة أخرى بعد قليل.' 
+      });
+    }
+    
+    next();
+  };
+}
+
+// Clean up expired rate limit entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of rateLimitMap.entries()) {
+    if (now > record.resetTime) {
+      rateLimitMap.delete(key);
+    }
+  }
+}, 60 * 1000); // Clean every minute
+
 app.use((req, res, next) => {
   requestContext.run(req, next);
 });
 
 app.use(express.json());
 
-// API health endpoint
+// API health endpoint — SECURITY FIX: Removed environment variable leakage
 app.get('/api/health', (req, res) => {
-  console.log('💚 Health check pinged');
-  const safeEnvKeys = Object.keys(process.env).map(key => {
-    const val = process.env[key];
-    const isSecret = key.toLowerCase().includes('key') || 
-                     key.toLowerCase().includes('secret') || 
-                     key.toLowerCase().includes('password') || 
-                     key.toLowerCase().includes('token') ||
-                     key.toLowerCase().includes('credential');
-    return {
-      key,
-      hasValue: !!val,
-      isSecret,
-      length: val ? val.length : 0,
-      preview: isSecret ? '***HIDDEN***' : (val ? val.substring(0, 50) : '')
-    };
-  });
   res.json({ 
     status: 'ok', 
-    time: new Date().toISOString(), 
-    envKeys: safeEnvKeys 
+    time: new Date().toISOString(),
+    version: process.env.npm_package_version || '1.0.0'
   });
 });
 
@@ -95,8 +158,8 @@ async function getFirebaseAdmin() {
   return { admin: adminInstance, db };
 }
 
-// API endpoint for password reset
-app.post('/api/resetUserPassword', async (req, res) => {
+// API endpoint for password reset — SECURITY FIX: Added rate limiting
+app.post('/api/resetUserPassword', rateLimit(RATE_LIMIT_MAX_AUTH), async (req, res) => {
   console.log('☁️ Received reset password request on local Express API');
   
   try {
@@ -128,7 +191,7 @@ app.post('/api/resetUserPassword', async (req, res) => {
 
     // 3. Extract and validate parameters
     const { userId, newPassword } = req.body || {};
-    if (!userId || !newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+    if (!userId || !newPassword || typeof newPassword !== 'string' || newPassword.length < 12) {
       console.warn('❌ Bad Request: Invalid arguments provided');
       return res.status(400).json({ success: false, message: 'بيانات غير صحيحة' });
     }
