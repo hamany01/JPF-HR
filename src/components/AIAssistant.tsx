@@ -195,7 +195,12 @@ export default function AIAssistant() {
             {/* Quick Actions */}
             <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex gap-2 flex-wrap">
               <button
-                onClick={() => { setInput('اعطني نظرة شاملة عن كل إمكانياتك'); sendMessage(); }}
+                onClick={() => {
+                  setMessages(prev => [...prev, 
+                    { role: 'user', content: 'اعطني نظرة شاملة عن كل إمكانياتك', timestamp: new Date().toISOString() },
+                    { role: 'agent', content: `إليك كل إمكانياتي:\n\n📊 1. تحليل شامل للنظام\nتحليل القضايا، الطلبات، المدفوعات، والمستخدمين مع إحصائيات تفصيلية.\n\n🔍 2. كشف الخانات الفاضية\nفحص كل المستندات في النظام وكشف الحقول الناقصة (حرج وتحذيري).\n\n⚡ 3. تحليل سير العمل\nتحديد الاختناقات في مراحل القضايا (مسودة ← مراجعة ← محكمة ← مغلقة).\n\n💡 4. توصيات ذكية\nاقتراحات عملية لتحسين الكفاءة وتقليل الخطوات.\n\n📲 5. تقارير تيليجرام\nإرسال تقرير كامل مباشرة إلى تيليجرام.\n\n💬 6. محادثة فورية\nالإجابة على أي سؤال عن النظام والحالات.\n\nاضغط على أي زر بالأعلى لتجربة هذه الإمكانيات!`, timestamp: new Date().toISOString() }
+                  ]);
+                }}
                 disabled={loading}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-all disabled:opacity-50 cursor-pointer"
               >
