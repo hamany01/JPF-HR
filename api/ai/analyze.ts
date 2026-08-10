@@ -1,20 +1,24 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// AI Agent analyze endpoint for Vercel Serverless Functions
+// ============================================================
+// AI Agent Analyze — Vercel Serverless Function
+// Full system analysis using Firestore REST API
+// ============================================================
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://187.77.66.234:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:3b';
 const FIREBASE_PROJECT_ID = 'gen-lang-client-0513298196';
 const FIRESTORE_DB_ID = 'ai-studio-5fccf1f6-352e-43ce-80ab-989a6c3d595e';
 
-async function verifyToken(token: string) {
-  const resp = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${process.env.VITE_FIREBASE_API_KEY || ''}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: token }) }
-  );
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  return data?.users?.[0]?.localId || null;
+function decodeFirebaseToken(token: string): string | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    return payload?.user_id || payload?.sub || null;
+  } catch {
+    return null;
+  }
 }
 
 function unwrapValue(v: any): any {
@@ -26,29 +30,29 @@ function unwrapValue(v: any): any {
   if ('nullValue' in v) return null;
   if ('arrayValue' in v) return (v.arrayValue.values || []).map(unwrapValue);
   if ('mapValue' in v) {
-    const result: any = {};
-    for (const [k, val] of Object.entries(v.mapValue.fields || {})) result[k] = unwrapValue(val);
-    return result;
+    const r: any = {};
+    for (const [k, val] of Object.entries(v.mapValue.fields || {})) r[k] = unwrapValue(val);
+    return r;
   }
   return null;
 }
 
-function fromFirestore(fields: any) {
-  const result: any = {};
-  for (const [k, v] of Object.entries(fields || {})) result[k] = unwrapValue(v);
-  return result;
-}
-
-async function fetchCollection(token: string, name: string) {
+async function fetchCollection(token: string, name: string): Promise<any[]> {
   const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DB_ID}/documents/${name}?pageSize=300`;
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!resp.ok) return [];
-  const json = await resp.json();
-  return (json.documents || []).map((doc: any) => {
-    const parts = doc.name.split('/');
-    const id = parts[parts.length - 1];
-    return { id, ...fromFirestore(doc.fields) };
-  });
+  try {
+    const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    return (json.documents || []).map((doc: any) => {
+      const parts = doc.name.split('/');
+      const id = parts[parts.length - 1];
+      const result: any = { id };
+      for (const [k, v] of Object.entries(doc.fields || {})) result[k] = unwrapValue(v);
+      return result;
+    });
+  } catch {
+    return [];
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -60,12 +64,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'غير مصرح' });
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'غير مصرح: يجب تسجيل الدخول' });
+    }
     const token = authHeader.split('Bearer ')[1];
-    const uid = await verifyToken(token);
-    if (!uid) return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    const uid = decodeFirebaseToken(token);
+    if (!uid) {
+      return res.status(401).json({ success: false, message: 'توكن غير صالح' });
+    }
 
-    // Fetch all collections
+    // Fetch all collections in parallel
     const [cases, requests, payments, users] = await Promise.all([
       fetchCollection(token, 'cases'),
       fetchCollection(token, 'requests'),
@@ -75,7 +83,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Check user role
     const userData = users.find((u: any) => u.id === uid);
-    if (!userData || userData.role !== 'admin') {
+    if (!userData) {
+      return res.status(403).json({ success: false, message: 'المستخدم غير موجود' });
+    }
+    if (userData.role !== 'admin') {
       return res.status(403).json({ success: false, message: 'التحليل متاح للمشرفين فقط' });
     }
 
@@ -101,7 +112,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Analyze workflow
+    // Analyze workflow bottlenecks
     const statusCounts: Record<string, number> = {};
     for (const c of cases) {
       const s = (c as any).status || 'unknown';
@@ -118,19 +129,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ];
     for (const s of stages) {
       const count = statusCounts[s.key] || 0;
-      if (count > 5) bottlenecks.push({ stage: s.name, count, averageTimeDays: 0, suggestion: `مراجعة القضايا في مرحلة ${s.name}` });
+      if (count > 5) {
+        bottlenecks.push({ stage: s.name, count, averageTimeDays: 0, suggestion: `مراجعة القضايا في مرحلة ${s.name}` });
+      }
     }
 
     // Generate AI recommendations
     let recommendations: string[] = [];
     try {
-      const stats = { totalCases: cases.length, totalRequests: requests.length, totalPayments: payments.length, totalUsers: users.length, emptyFields: emptyFieldsReport.length, bottlenecks: bottlenecks.length };
+      const stats = {
+        totalCases: cases.length,
+        totalRequests: requests.length,
+        totalPayments: payments.length,
+        totalUsers: users.length,
+        emptyFields: emptyFieldsReport.length,
+        bottlenecks: bottlenecks.length,
+      };
       const ollamaResp = await fetch(`${OLLAMA_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: OLLAMA_MODEL,
-          messages: [{ role: 'user', content: `حلل هذه الإحصائيات واقترح 3 توصيات عملية قصيرة:\n${JSON.stringify(stats)}` }],
+          messages: [{ role: 'user', content: `حلل هذه الإحصائيات واقترح 3 توصيات قصيرة:\n${JSON.stringify(stats)}` }],
           stream: false,
           options: { temperature: 0.7, num_predict: 512 },
         }),
