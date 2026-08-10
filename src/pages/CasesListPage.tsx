@@ -25,7 +25,10 @@ export default function CasesListPage() {
     platform: 'الكل',
     requestSerialNumber: '',
     defendantName: '',
-    idType: 'الكل'
+    idNumber: '',
+    idType: 'الكل',
+    clientNumber: '',
+    noClientNumberOnly: false
   });
   const { user, profile, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -361,13 +364,80 @@ export default function CasesListPage() {
     );
   };
 
+  const normalizeArabic = (text: string | undefined | null): string => {
+    if (!text) return '';
+    return String(text)
+      .toLowerCase()
+      .replace(/[٠١٢٣٤٥٦٧٨٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d).toString())
+      .replace(/[\u064B-\u065F]/g, '')
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ى/g, 'ي')
+      .replace(/ة/g, 'ه')
+      .replace(/[-_\|]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
   const filteredCases = cases.filter(item => {
-    const matchesPhone = !filters.phone || item.defendantPhone?.includes(filters.phone);
-    const matchesRequest = !filters.requestSerialNumber || 
-                          item.requestSerialNumber?.includes(filters.requestSerialNumber) || 
-                          item.requestNumber?.includes(filters.requestSerialNumber);
-    const matchesName = !filters.defendantName || item.defendantName?.toLowerCase().includes(filters.defendantName.toLowerCase());
-    return matchesPhone && matchesRequest && matchesName;
+    // 1. Phone matching
+    const phoneFilter = normalizeArabic(filters.phone);
+    const matchesPhone = !phoneFilter || (
+      normalizeArabic(item.defendantPhone).includes(phoneFilter) ||
+      normalizeArabic(item.applicantPhone).includes(phoneFilter) ||
+      normalizeArabic(item.phone).includes(phoneFilter)
+    );
+
+    // 2. Serial / Request / Reference number matching
+    const serialFilter = normalizeArabic(filters.requestSerialNumber);
+    const matchesRequest = !serialFilter || (
+      normalizeArabic(item.requestSerialNumber).includes(serialFilter) || 
+      normalizeArabic(item.requestNumber).includes(serialFilter) ||
+      normalizeArabic(item.electronicReferenceNumber).includes(serialFilter) ||
+      normalizeArabic(item.najizClaimNumber).includes(serialFilter) ||
+      normalizeArabic(item.serialNumber).includes(serialFilter) ||
+      normalizeArabic(item.idNumber).includes(serialFilter) ||
+      normalizeArabic(item.idType).includes(serialFilter)
+    );
+
+    // 3. ID Number matching (رقم الهوية / السجل)
+    const idNumFilter = normalizeArabic(filters.idNumber);
+    const matchesIdNumber = !idNumFilter || (
+      normalizeArabic(item.idNumber).includes(idNumFilter) ||
+      normalizeArabic(item.defendantIdNumber).includes(idNumFilter) ||
+      normalizeArabic(item.identityNumber).includes(idNumFilter) ||
+      normalizeArabic(item.nationalId).includes(idNumFilter) ||
+      normalizeArabic(item.idType).includes(idNumFilter) ||
+      normalizeArabic(item.clientNumber).includes(idNumFilter)
+    );
+
+    // 4. Flexible Name matching (البحث بأي كلمة أو جزء من الاسم بغض النظر عن الترتيب)
+    const nameFilter = normalizeArabic(filters.defendantName);
+    let matchesName = true;
+    if (nameFilter) {
+      const searchWords = nameFilter.split(' ').filter(Boolean);
+      const combinedTargetNames = normalizeArabic(
+        `${item.defendantName || ''} ${item.applicantName || ''} ${item.representativeName || ''} ${item.idType || ''} ${item.idNumber || ''}`
+      );
+      matchesName = searchWords.every(word => combinedTargetNames.includes(word));
+    }
+
+    // 5. Client Number matching (رقم العميل / أو تصفية الخالين من رقم العميل)
+    const clientNumFilter = normalizeArabic(filters.clientNumber);
+    const hasClientNo = Boolean(
+      item.clientNumber && 
+      String(item.clientNumber).trim() !== '' && 
+      String(item.clientNumber).trim() !== '—' && 
+      String(item.clientNumber).trim() !== '-'
+    );
+
+    let matchesClientNumber = true;
+    if (filters.noClientNumberOnly) {
+      matchesClientNumber = !hasClientNo;
+    } else if (clientNumFilter) {
+      matchesClientNumber = normalizeArabic(item.clientNumber).includes(clientNumFilter);
+    }
+
+    return matchesPhone && matchesRequest && matchesIdNumber && matchesName && matchesClientNumber;
   });
 
   const activeCases = filteredCases.filter(c => c.status !== 'closed' && c.status !== 'archived');
@@ -515,7 +585,7 @@ export default function CasesListPage() {
 
       {/* Filter Bar */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-7 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8 gap-4">
           <div className="space-y-1.5">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">رقم الطلب / المرجع</label>
             <div className="relative">
@@ -536,10 +606,63 @@ export default function CasesListPage() {
               <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 type="text"
-                placeholder="بحث بالاسم..."
+                placeholder="بحث بالاسم أو اللقب..."
                 value={filters.defendantName}
                 onChange={(e) => setFilters({...filters, defendantName: e.target.value})}
                 className="w-full bg-slate-50 border border-slate-100 rounded-xl pr-11 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-bold"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">رقم الهوية / السجل</label>
+            <div className="relative">
+              <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input 
+                type="text"
+                placeholder="100..."
+                value={filters.idNumber}
+                onChange={(e) => setFilters({...filters, idNumber: e.target.value})}
+                className="w-full bg-slate-50 border border-slate-100 rounded-xl pr-11 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">رقم العميل</label>
+              <button
+                type="button"
+                onClick={() => setFilters(prev => ({ 
+                  ...prev, 
+                  noClientNumberOnly: !prev.noClientNumberOnly,
+                  clientNumber: !prev.noClientNumberOnly ? '' : prev.clientNumber
+                }))}
+                className={cn(
+                  "text-[9px] font-black px-1.5 py-0.5 rounded transition-all border flex items-center gap-1 cursor-pointer",
+                  filters.noClientNumberOnly
+                    ? "bg-amber-500 text-white border-amber-600 shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-700 border-slate-200"
+                )}
+                title="تصفية القضايا التي لا تحتوي على رقم عميل"
+              >
+                <span>بدون رقم</span>
+              </button>
+            </div>
+            <div className="relative">
+              <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input 
+                type="text"
+                placeholder={filters.noClientNumberOnly ? "عرض الخالين من الرقم..." : "بحث برقم العميل..."}
+                disabled={filters.noClientNumberOnly}
+                value={filters.clientNumber}
+                onChange={(e) => setFilters({...filters, clientNumber: e.target.value})}
+                className={cn(
+                  "w-full border rounded-xl pr-11 py-2.5 text-sm focus:ring-2 outline-none transition-all font-mono",
+                  filters.noClientNumberOnly 
+                    ? "bg-amber-50 border-amber-300 text-amber-900 font-bold placeholder-amber-600" 
+                    : "bg-slate-50 border-slate-100 focus:ring-indigo-500 text-slate-900"
+                )}
               />
             </div>
           </div>
@@ -613,7 +736,10 @@ export default function CasesListPage() {
                 platform: 'الكل',
                 requestSerialNumber: '',
                 defendantName: '',
-                idType: 'الكل'
+                idNumber: '',
+                idType: 'الكل',
+                clientNumber: '',
+                noClientNumberOnly: false
               })}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all border border-dashed border-slate-200 hover:border-indigo-200"
             >
@@ -623,6 +749,22 @@ export default function CasesListPage() {
           </div>
         </div>
       </div>
+
+      {filters.noClientNumberOnly && (
+        <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-4 flex items-center justify-between text-amber-900 text-xs font-bold shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle size={18} className="text-amber-600 shrink-0" />
+            <span>يتم الآن عرض القضايا التي تفتقر إلى رقم عميل ({displayedCases.length} قضية). يمكنك النقر على أية قضية لتعديل وتحديث رقم العميل بها.</span>
+          </div>
+          <button 
+            type="button"
+            onClick={() => setFilters(prev => ({ ...prev, noClientNumberOnly: false }))}
+            className="text-amber-700 hover:text-amber-950 underline font-black shrink-0 mr-4"
+          >
+            إلغاء التصفية
+          </button>
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-x-auto relative">
         {loading && (
@@ -694,7 +836,12 @@ export default function CasesListPage() {
                   <div className="text-[11px] text-slate-400 font-normal">{item.subType}</div>
                 </td>
                 <td className="px-5 py-5 font-bold">
-                  {item.defendantName}
+                  <div>{item.defendantName || '—'}</div>
+                  {(item.idNumber || item.defendantIdNumber || (item.idType && /^\d+$/.test(String(item.idType).trim()))) && (
+                    <div className="text-[11px] text-slate-400 font-mono font-normal mt-0.5">
+                      هوية/سجل: {item.idNumber || item.defendantIdNumber || item.idType}
+                    </div>
+                  )}
                 </td>
                 <td className="px-5 py-5 whitespace-nowrap">
                   {renderDate(item.fileDate)}
@@ -718,7 +865,13 @@ export default function CasesListPage() {
                   {item.legalCapacity}
                 </td>
                 <td className="px-5 py-5 font-mono">
-                  {item.clientNumber}
+                  {item.clientNumber && String(item.clientNumber).trim() !== '' && String(item.clientNumber).trim() !== '—' ? (
+                    <span className="font-mono text-slate-900 font-bold">{item.clientNumber}</span>
+                  ) : (
+                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60 inline-flex items-center gap-1">
+                      غير محدد
+                    </span>
+                  )}
                 </td>
                 <td className="px-5 py-5 text-xs text-slate-400 max-w-[150px] truncate">
                   {item.lastWithdrawalUpdate || '—'}

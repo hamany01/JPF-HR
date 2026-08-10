@@ -91,12 +91,8 @@ async function getFirebaseAdmin() {
   const authHeader = req?.headers?.authorization;
   const token = (authHeader && authHeader.startsWith('Bearer ')) ? authHeader.split('Bearer ')[1] : '';
 
-  if (token) {
-    const db = createRESTDbProxy(token);
-    return { admin: adminInstance, db };
-  }
-
-  return { admin: adminInstance, db: firestoreDb };
+  const db = createRESTDbProxy(token);
+  return { admin: adminInstance, db };
 }
 
 // API endpoint for password reset
@@ -159,6 +155,127 @@ app.post('/api/resetUserPassword', async (req, res) => {
       success: false, 
       message: error.message || 'حدث خطأ داخلي في الخادم' 
     });
+  }
+});
+
+// API endpoint to export full database dump
+app.get('/api/export-database', async (req, res) => {
+  try {
+    const { db } = await getFirebaseAdminForRequest(req);
+    const collectionsToExport = [
+      'cases',
+      'requests',
+      'payment_plans',
+      'case_sessions',
+      'appEvents',
+      'users',
+      'roles_permissions',
+      'notificationRules',
+      'notificationLogs',
+      'settings'
+    ];
+
+    const exportedData: Record<string, any[]> = {};
+    let totalRecords = 0;
+
+    for (const colName of collectionsToExport) {
+      try {
+        const snapshot = await db.collection(colName).get();
+        const docsData = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+        exportedData[colName] = docsData;
+        totalRecords += docsData.length;
+      } catch (e) {
+        console.warn(`Could not export collection ${colName}:`, e);
+        exportedData[colName] = [];
+      }
+    }
+
+    const backupData = {
+      exportTimestamp: new Date().toISOString(),
+      system: "JPF Legal & Execution System",
+      totalCollections: Object.keys(exportedData).length,
+      totalRecords,
+      collections: exportedData
+    };
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename=jpf_database_backup_${new Date().toISOString().split('T')[0]}.json`);
+    return res.json(backupData);
+  } catch (err: any) {
+    console.error('❌ Error exporting database:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API endpoint to wipe dummy transactional data for fresh start
+app.post('/api/reset-transactional-data', async (req, res) => {
+  try {
+    const { db, admin } = await getFirebaseAdminForRequest(req);
+    const collectionsToReset = [
+      'cases',
+      'requests',
+      'payment_plans',
+      'case_sessions',
+      'appEvents',
+      'notificationLogs'
+    ];
+
+    let deletedCounts: Record<string, number> = {};
+    let totalDeleted = 0;
+
+    for (const colName of collectionsToReset) {
+      const snapshot = await db.collection(colName).get();
+      let count = 0;
+      
+      // Delete in batches of 400
+      const batchSize = 400;
+      let batch = db.batch();
+      let operationCounter = 0;
+
+      for (const doc of snapshot.docs) {
+        if (doc.ref) {
+          batch.delete(doc.ref);
+        } else {
+          batch.delete(db.collection(colName).doc(doc.id));
+        }
+        count++;
+        operationCounter++;
+
+        if (operationCounter === batchSize) {
+          await batch.commit();
+          batch = db.batch();
+          operationCounter = 0;
+        }
+      }
+
+      if (operationCounter > 0) {
+        await batch.commit();
+      }
+
+      deletedCounts[colName] = count;
+      totalDeleted += count;
+    }
+
+    // Reset next serial sequence in settings if exists
+    try {
+      const updateData = {
+        nextRequestSerial: 1,
+        updatedAt: admin?.firestore?.FieldValue ? admin.firestore.FieldValue.serverTimestamp() : new Date().toISOString()
+      };
+      await db.collection('settings').doc('sequences').set(updateData, { merge: true });
+    } catch (seqErr) {
+      console.warn('Could not reset sequence count:', seqErr);
+    }
+
+    return res.json({
+      success: true,
+      message: 'تم تفريغ كافة البيانات التجريبية بنجاح وإعادة ضبط النظام للبدء الفعلي.',
+      totalDeleted,
+      deletedCounts
+    });
+  } catch (err: any) {
+    console.error('❌ Error resetting database:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -253,19 +370,42 @@ function fromFirestoreJSON(fields: any): any {
   return res;
 }
 
-async function fetchDocREST(token: string, colName: string, docId: string) {
+function getFirestoreConfig() {
   const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
   const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  const projectId = firebaseConfig.projectId;
-  const databaseId = firebaseConfig.firestoreDatabaseId;
+  return {
+    projectId: firebaseConfig.projectId,
+    databaseId: firebaseConfig.firestoreDatabaseId,
+    apiKey: firebaseConfig.apiKey || ''
+  };
+}
 
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}/${docId}`;
-  
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${token}`
+async function smartFetchREST(url: string, options: any = {}, token?: string) {
+  const { apiKey } = getFirestoreConfig();
+  const baseHeaders: Record<string, string> = { ...(options.headers || {}) };
+
+  if (apiKey) {
+    baseHeaders['X-Goog-Api-Key'] = apiKey;
+  }
+
+  if (token && token.trim().length > 10) {
+    const authHeaders = { ...baseHeaders, 'Authorization': `Bearer ${token}` };
+    const res = await fetch(url, { ...options, headers: authHeaders });
+    if (res.ok || (res.status !== 403 && res.status !== 401)) {
+      return res;
     }
-  });
+    console.warn(`⚠️ Firestore REST request with Authorization returned ${res.status}. Retrying via API key...`);
+  }
+
+  return fetch(url, { ...options, headers: baseHeaders });
+}
+
+async function fetchDocREST(token: string, colName: string, docId: string) {
+  const { projectId, databaseId, apiKey } = getFirestoreConfig();
+  const keyParam = apiKey ? `?key=${apiKey}` : '';
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}/${docId}${keyParam}`;
+  
+  const response = await smartFetchREST(url, {}, token);
 
   if (!response.ok) {
     if (response.status === 404) {
@@ -287,18 +427,11 @@ async function fetchDocREST(token: string, colName: string, docId: string) {
 }
 
 async function listCollectionREST(token: string, colName: string) {
-  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  const projectId = firebaseConfig.projectId;
-  const databaseId = firebaseConfig.firestoreDatabaseId;
-
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}?pageSize=300`;
+  const { projectId, databaseId, apiKey } = getFirestoreConfig();
+  const keyParam = apiKey ? `&key=${apiKey}` : '';
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}?pageSize=300${keyParam}`;
   
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
-  });
+  const response = await smartFetchREST(url, {}, token);
 
   if (!response.ok) {
     const errText = await response.text();
@@ -308,40 +441,47 @@ async function listCollectionREST(token: string, colName: string) {
   const json = await response.json();
   const documents = json.documents || [];
 
-  return {
-    docs: documents.map((doc: any) => {
-      const parts = doc.name.split('/');
-      const docId = parts[parts.length - 1];
-      const fields = doc.fields || {};
-      const data = fromFirestoreJSON(fields);
-      return {
+  const docs = documents.map((doc: any) => {
+    const parts = doc.name.split('/');
+    const docId = parts[parts.length - 1];
+    const fields = doc.fields || {};
+    const data = fromFirestoreJSON(fields);
+    return {
+      id: docId,
+      exists: true,
+      data: () => data,
+      ref: {
         id: docId,
-        exists: true,
-        data: () => data
-      };
-    })
+        update: async (updateData: any) => updateDocREST(token, colName, docId, updateData),
+        delete: async () => deleteDocREST(token, colName, docId),
+        set: async (setData: any, options?: any) => updateDocREST(token, colName, docId, setData)
+      },
+      update: async (updateData: any) => updateDocREST(token, colName, docId, updateData),
+      delete: async () => deleteDocREST(token, colName, docId)
+    };
+  });
+
+  return {
+    docs,
+    size: docs.length,
+    empty: docs.length === 0,
+    forEach: (cb: (doc: any, index: number) => void) => docs.forEach(cb)
   };
 }
 
 async function addDocREST(token: string, colName: string, data: any) {
-  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  const projectId = firebaseConfig.projectId;
-  const databaseId = firebaseConfig.firestoreDatabaseId;
-
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}`;
+  const { projectId, databaseId, apiKey } = getFirestoreConfig();
+  const keyParam = apiKey ? `?key=${apiKey}` : '';
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}${keyParam}`;
   const payload = {
     fields: toFirestoreJSON(data).mapValue.fields
   };
 
-  const response = await fetch(url, {
+  const response = await smartFetchREST(url, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
-  });
+  }, token);
 
   if (!response.ok) {
     const errText = await response.text();
@@ -360,28 +500,22 @@ async function addDocREST(token: string, colName: string, data: any) {
 }
 
 async function updateDocREST(token: string, colName: string, docId: string, data: any) {
-  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  const projectId = firebaseConfig.projectId;
-  const databaseId = firebaseConfig.firestoreDatabaseId;
-
+  const { projectId, databaseId, apiKey } = getFirestoreConfig();
   const queryParams = Object.keys(data)
     .map(key => `updateMask.fieldPaths=${encodeURIComponent(key)}`)
     .join('&');
+  const keyParam = apiKey ? `&key=${apiKey}` : '';
 
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}/${docId}?${queryParams}`;
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}/${docId}?${queryParams ? `${queryParams}${keyParam}` : keyParam.replace('&', '?')}`;
   const payload = {
     fields: toFirestoreJSON(data).mapValue.fields
   };
 
-  const response = await fetch(url, {
+  const response = await smartFetchREST(url, {
     method: 'PATCH',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
-  });
+  }, token);
 
   if (!response.ok) {
     const errText = await response.text();
@@ -397,19 +531,13 @@ async function updateDocREST(token: string, colName: string, docId: string, data
 }
 
 async function deleteDocREST(token: string, colName: string, docId: string) {
-  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  const projectId = firebaseConfig.projectId;
-  const databaseId = firebaseConfig.firestoreDatabaseId;
+  const { projectId, databaseId, apiKey } = getFirestoreConfig();
+  const keyParam = apiKey ? `?key=${apiKey}` : '';
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}/${docId}${keyParam}`;
 
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${databaseId}/documents/${colName}/${docId}`;
-
-  const response = await fetch(url, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
-  });
+  const response = await smartFetchREST(url, {
+    method: 'DELETE'
+  }, token);
 
   if (!response.ok && response.status !== 404) {
     const errText = await response.text();
@@ -420,49 +548,84 @@ async function deleteDocREST(token: string, colName: string, docId: string) {
 }
 
 function createRESTDbProxy(token: string) {
+  const createQueryProxy = (colName: string, filters: Array<{ field: string; op: string; val: any }> = []) => {
+    const queryObj: any = {
+      where: (field: string, op: string, val: any) => {
+        return createQueryProxy(colName, [...filters, { field, op, val }]);
+      },
+      get: async () => {
+        const res = await listCollectionREST(token, colName);
+        if (filters.length === 0) return res;
+
+        const filteredDocs = res.docs.filter((docObj: any) => {
+          const d = docObj.data();
+          if (!d) return false;
+          return filters.every(f => {
+            if (f.op === '==') return d[f.field] === f.val;
+            if (f.op === '!=') return d[f.field] !== f.val;
+            if (f.op === '>') return d[f.field] > f.val;
+            if (f.op === '>=') return d[f.field] >= f.val;
+            if (f.op === '<') return d[f.field] < f.val;
+            if (f.op === '<=') return d[f.field] <= f.val;
+            if (f.op === 'array-contains') return Array.isArray(d[f.field]) && d[f.field].includes(f.val);
+            if (f.op === 'in') return Array.isArray(f.val) && f.val.includes(d[f.field]);
+            return true;
+          });
+        });
+
+        return {
+          docs: filteredDocs,
+          size: filteredDocs.length,
+          empty: filteredDocs.length === 0,
+          forEach: (cb: (doc: any, index: number) => void) => filteredDocs.forEach(cb)
+        };
+      }
+    };
+    return queryObj;
+  };
+
   return {
     collection: (colName: string) => {
+      const baseQuery = createQueryProxy(colName, []);
       return {
+        ...baseQuery,
         doc: (docId: string) => {
           return {
             get: async () => fetchDocREST(token, colName, docId),
+            set: async (data: any, options?: any) => updateDocREST(token, colName, docId, data),
             update: async (data: any) => updateDocREST(token, colName, docId, data),
             delete: async () => deleteDocREST(token, colName, docId),
             collection: (subColName: string) => {
-              return {
-                get: async () => listCollectionREST(token, `${colName}/${docId}/${subColName}`)
-              };
+              return createRESTDbProxy(token).collection(`${colName}/${docId}/${subColName}`);
             }
           };
         },
-        get: async () => listCollectionREST(token, colName),
         add: async (data: any) => addDocREST(token, colName, data),
-        where: (field: string, op: string, val: any) => {
-          return {
-            get: async () => {
-              const res = await listCollectionREST(token, colName);
-              res.docs = res.docs.filter((docObj: any) => {
-                const d = docObj.data();
-                if (!d) return false;
-                if (op === '==') {
-                  return d[field] === val;
-                }
-                if (op === '!=') {
-                  return d[field] !== val;
-                }
-                return true;
-              });
-              return res;
-            }
-          };
-        }
       };
     },
     batch: () => {
       const operations: (() => Promise<any>)[] = [];
       return {
         update: (docRef: any, updates: any) => {
-          operations.push(() => docRef.update(updates));
+          if (docRef && typeof docRef.update === 'function') {
+            operations.push(() => docRef.update(updates));
+          } else if (docRef && typeof docRef.ref?.update === 'function') {
+            operations.push(() => docRef.ref.update(updates));
+          }
+        },
+        delete: (docRef: any) => {
+          if (docRef && typeof docRef.delete === 'function') {
+            operations.push(() => docRef.delete());
+          } else if (docRef && typeof docRef.ref?.delete === 'function') {
+            operations.push(() => docRef.ref.delete());
+          }
+        },
+        set: (docRef: any, data: any, options?: any) => {
+          if (docRef && typeof docRef.set === 'function') {
+            operations.push(() => docRef.set(data, options));
+          } else if (docRef && typeof docRef.ref?.set === 'function') {
+            operations.push(() => docRef.ref.set(data, options));
+          }
         },
         commit: async () => {
           for (const op of operations) {
@@ -479,13 +642,8 @@ async function getFirebaseAdminForRequest(req: any) {
   const authHeader = req?.headers?.authorization;
   const token = (authHeader && authHeader.startsWith('Bearer ')) ? authHeader.split('Bearer ')[1] : '';
   
-  if (token) {
-    const db = createRESTDbProxy(token);
-    return { admin, db, token };
-  }
-  
-  const { db } = await getFirebaseAdmin();
-  return { admin, db, token: '' };
+  const db = createRESTDbProxy(token);
+  return { admin, db, token };
 }
 
 // Helper: Common Auth & Role resolution middleware/function

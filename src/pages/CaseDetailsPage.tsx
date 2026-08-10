@@ -505,13 +505,17 @@ export default function CaseDetailsPage() {
       const remaining = claim - received;
       const selectedStatus = statusOptions.find(s => s.value === editForm.status);
 
+      const reqNum = editForm.requestNumber || editForm.requestSerialNumber || '';
+
       const payload = {
         ...editForm,
+        requestNumber: reqNum,
+        requestSerialNumber: reqNum,
         fileDate: editForm.fileDate ? Timestamp.fromDate(new Date(editForm.fileDate)) : null,
         claimAmount: claim,
         receivedAmount: received,
         remainingAmount: remaining,
-        statusLabel: selectedStatus?.label || editForm.statusLabel,
+        statusLabel: selectedStatus?.label || editForm.statusLabel || editForm.status,
         updatedAt: serverTimestamp()
       };
 
@@ -522,11 +526,11 @@ export default function CaseDetailsPage() {
       if (caseData.status !== editForm.status) {
         await createCaseEvent({
           caseId: caseId,
-          caseSerialNumber: caseData.requestSerialNumber || '',
+          caseSerialNumber: reqNum,
           type: 'case_status_changed',
-          message: `تم تغيير حالة القضية ${caseData.requestSerialNumber || ''} من ${caseData.statusLabel || 'غير معروف'} إلى ${selectedStatus?.label || editForm.statusLabel}.`,
+          message: `تم تغيير حالة القضية ${reqNum} من ${caseData.statusLabel || 'غير معروف'} إلى ${selectedStatus?.label || editForm.statusLabel}.`,
           payload: { 
-            caseSerialNumber: caseData.requestSerialNumber || '',
+            caseSerialNumber: reqNum,
             oldStatus: caseData.status, 
             newStatus: editForm.status,
             oldStatusLabel: caseData.statusLabel,
@@ -1318,185 +1322,386 @@ export default function CaseDetailsPage() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl max-h-[90vh] overflow-y-auto"
+              className="relative w-full max-w-4xl bg-white rounded-[2.5rem] shadow-2xl max-h-[92vh] flex flex-col overflow-hidden"
             >
-              <div className="px-10 py-8 border-b border-slate-100 flex items-center justify-between bg-white sticky top-0 z-10">
+              <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
                     <Edit size={24} />
                   </div>
                   <div>
-                    <h3 className="text-xl font-black text-slate-900">تعديل بيانات الملف التنفيذي</h3>
-                    <p className="text-xs text-slate-400 font-medium mt-0.5">تحديث معلومات القضية والأطراف والمبالغ</p>
+                    <h3 className="text-xl font-black text-slate-900">تعديل كافة بيانات الملف التنفيذي</h3>
+                    <p className="text-xs text-slate-400 font-medium mt-0.5">تحديث معلومات القضية والأطراف والمندوب والعميل والمبالغ وسير الإجراء</p>
                   </div>
                 </div>
                 <button 
                   onClick={() => setIsEditModalOpen(false)}
                   disabled={editSubmitting}
-                  className="p-3 text-slate-400 hover:bg-slate-50 rounded-2xl transition-colors"
+                  className="p-3 text-slate-400 hover:bg-slate-50 rounded-2xl transition-colors cursor-pointer"
                 >
                   <X size={24} />
                 </button>
               </div>
 
-              <div className="max-h-[70vh] overflow-y-auto">
-                <form onSubmit={handleUpdateCase} className="p-10 space-y-8">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">رقم الطلب</label>
-                       <input 
-                         required
-                         type="text"
-                         value={editForm.requestNumber}
-                         onChange={(e) => setEditForm({...editForm, requestNumber: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-700 font-mono"
-                       />
+              <div className="overflow-y-auto p-8 space-y-8 flex-1">
+                <form onSubmit={handleUpdateCase} className="space-y-8">
+                  
+                  {/* Section 1: Request & Platform Info */}
+                  <div className="space-y-4 bg-slate-50/60 p-6 rounded-3xl border border-slate-100">
+                    <div className="flex items-center gap-2 text-indigo-600 border-b border-slate-200/60 pb-3">
+                      <Hash size={18} />
+                      <h4 className="text-sm font-black">1. بيانات الطلب الأساسية والمنصة</h4>
                     </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">نوع الطلب</label>
-                       <select 
-                         required
-                         value={editForm.requestType}
-                         onChange={(e) => setEditForm({...editForm, requestType: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-700"
-                       >
-                         <option value="تنفيذ">تنفيذ</option>
-                         <option value="عامة">عامة</option>
-                       </select>
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">المنفذ ضده</label>
-                       <input 
-                         required
-                         type="text"
-                         value={editForm.defendantName}
-                         onChange={(e) => setEditForm({...editForm, defendantName: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-700"
-                       />
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">مقدم الطلب</label>
-                       <input 
-                         required
-                         type="text"
-                         value={editForm.applicantName}
-                         onChange={(e) => setEditForm({...editForm, applicantName: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-700"
-                       />
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">رقم جوال المنفذ ضده</label>
-                       <input 
-                         type="tel"
-                         value={editForm.defendantPhone || ''}
-                         onChange={(e) => setEditForm({...editForm, defendantPhone: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-700 font-mono"
-                         placeholder="05xxxxxxxx"
-                       />
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">رقم العميل</label>
-                       <input 
-                         type="text"
-                         value={editForm.clientNumber || ''}
-                         onChange={(e) => setEditForm({...editForm, clientNumber: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-700 font-mono"
-                       />
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">مبلغ المطالبة</label>
-                       <input 
-                         required
-                         type="number"
-                         value={editForm.claimAmount}
-                         onChange={(e) => setEditForm({...editForm, claimAmount: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-black text-slate-900 font-mono"
-                       />
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1 text-green-600">المبلغ المستلم</label>
-                       <input 
-                         required
-                         type="number"
-                         value={editForm.receivedAmount}
-                         onChange={(e) => setEditForm({...editForm, receivedAmount: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-black text-green-600 font-mono"
-                       />
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">حالة الطلب</label>
-                       <select 
-                         value={editForm.status}
-                         onChange={(e) => setEditForm({...editForm, status: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-black text-slate-700"
-                       >
-                         {statusOptions.map(opt => (
-                           <option key={opt.value} value={opt.value}>{opt.label}</option>
-                         ))}
-                       </select>
-                    </div>
-                    <div className="space-y-2">
-                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">تاريخ الرفع (ميلادي)</label>
-                       <input 
-                         type="date"
-                         value={editForm.fileDate}
-                         onChange={(e) => setEditForm({...editForm, fileDate: e.target.value})}
-                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-700"
-                       />
-                     </div>
-                     <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">المنصة</label>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">رقم الطلب / التسلسلي</label>
+                        <input 
+                          required
+                          type="text"
+                          value={editForm.requestNumber || editForm.requestSerialNumber || ''}
+                          onChange={(e) => setEditForm({...editForm, requestNumber: e.target.value, requestSerialNumber: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">الرقم المرجعي الإلكتروني</label>
+                        <input 
+                          type="text"
+                          value={editForm.electronicReferenceNumber || ''}
+                          onChange={(e) => setEditForm({...editForm, electronicReferenceNumber: e.target.value})}
+                          placeholder="الرقم المرجعي..."
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">نوع الطلب</label>
+                        <select 
+                          required
+                          value={editForm.requestType || 'تنفيذ'}
+                          onChange={(e) => setEditForm({...editForm, requestType: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        >
+                          <option value="تنفيذ">تنفيذ</option>
+                          <option value="عامة">عامة</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">النوع الفرعي / موضوع الطلب</label>
+                        <input 
+                          type="text"
+                          value={editForm.subType || ''}
+                          onChange={(e) => setEditForm({...editForm, subType: e.target.value})}
+                          placeholder="مثال: سند لأمر / كمبيالة"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">المنصة</label>
                         <select 
                           value={editForm.platform || ''}
                           onChange={(e) => setEditForm({...editForm, platform: e.target.value})}
-                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-black text-slate-700"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
                         >
                           <option value="">اختر المنصة</option>
                           {platformOptions.map(opt => (
                             <option key={opt} value={opt}>{opt}</option>
                           ))}
                         </select>
-                     </div>
-                     <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">وضع القرار</label>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">المحكمة / الدائرة</label>
+                        <input 
+                          type="text"
+                          value={editForm.courtName || editForm.court || ''}
+                          onChange={(e) => setEditForm({...editForm, courtName: e.target.value, court: e.target.value})}
+                          placeholder="مثال: محكمة التنفيذ بالرياض"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">حالة الطلب</label>
+                        <select 
+                          value={editForm.status || 'draft'}
+                          onChange={(e) => setEditForm({...editForm, status: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        >
+                          {statusOptions.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">وضع القرار</label>
                         <select 
                           value={editForm.decisionCode || ''}
                           onChange={(e) => {
                             const opt = decisionOptions.find(d => d.code === e.target.value);
                             setEditForm({...editForm, decisionCode: e.target.value, decisionLabel: opt?.label || ''});
                           }}
-                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-black text-slate-700"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
                         >
                           {decisionOptions.map(opt => (
                             <option key={opt.code} value={opt.code}>{opt.label}</option>
                           ))}
                         </select>
-                     </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">تاريخ الرفع (ميلادي)</label>
+                        <input 
+                          type="date"
+                          value={editForm.fileDate || ''}
+                          onChange={(e) => setEditForm({...editForm, fileDate: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">تاريخ الرفع (هجري)</label>
+                        <input 
+                          type="text"
+                          value={editForm.fileDateHijri || ''}
+                          onChange={(e) => setEditForm({...editForm, fileDateHijri: e.target.value})}
+                          placeholder="مثال: 1445/08/20 هـ"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        />
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-1">سير الإجراء التنفيذي</label>
-                    <textarea 
-                      value={editForm.executionProgress}
-                      onChange={(e) => setEditForm({...editForm, executionProgress: e.target.value})}
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-medium text-slate-700 h-32 leading-relaxed"
-                    />
+                  {/* Section 2: Parties, Client & Representative */}
+                  <div className="space-y-4 bg-slate-50/60 p-6 rounded-3xl border border-slate-100">
+                    <div className="flex items-center gap-2 text-indigo-600 border-b border-slate-200/60 pb-3">
+                      <UserCheck size={18} />
+                      <h4 className="text-sm font-black">2. أطراف القضية والعميل والمندوب</h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">اسم المنفذ ضده / المدعى عليه</label>
+                        <input 
+                          required
+                          type="text"
+                          value={editForm.defendantName || ''}
+                          onChange={(e) => setEditForm({...editForm, defendantName: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">رقم جوال المنفذ ضده</label>
+                        <input 
+                          type="tel"
+                          value={editForm.defendantPhone || ''}
+                          onChange={(e) => setEditForm({...editForm, defendantPhone: e.target.value})}
+                          placeholder="05xxxxxxxx"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">رقم هوية / سجل المنفذ ضده</label>
+                        <input 
+                          type="text"
+                          value={editForm.idNumber || ''}
+                          onChange={(e) => setEditForm({...editForm, idNumber: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">نوع الهوية</label>
+                        <select 
+                          value={editForm.idType || ''}
+                          onChange={(e) => setEditForm({...editForm, idType: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        >
+                          <option value="">اختر نوع الهوية</option>
+                          <option value="بطاقة هوية وطنية">بطاقة هوية وطنية</option>
+                          <option value="إقامة">إقامة</option>
+                          <option value="سجل تجاري">سجل تجاري</option>
+                          <option value="جواز سفر">جواز سفر</option>
+                          <option value="أخرى">أخرى</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">الجنسية</label>
+                        <input 
+                          type="text"
+                          value={editForm.nationality || ''}
+                          onChange={(e) => setEditForm({...editForm, nationality: e.target.value})}
+                          placeholder="مثال: سعودي / مقيم"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">الصفة القانونية</label>
+                        <select 
+                          value={editForm.legalCapacity || ''}
+                          onChange={(e) => setEditForm({...editForm, legalCapacity: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        >
+                          <option value="">اختر الصفة</option>
+                          <option value="دائن">دائن</option>
+                          <option value="مدين">مدين</option>
+                          <option value="أصيل">أصيل</option>
+                          <option value="وكيل">وكيل</option>
+                          <option value="شركة">شركة</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">اسم مقدم الطلب / طالب التنفيذ</label>
+                        <input 
+                          required
+                          type="text"
+                          value={editForm.applicantName || ''}
+                          onChange={(e) => setEditForm({...editForm, applicantName: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">رقم جوال مقدم الطلب</label>
+                        <input 
+                          type="tel"
+                          value={editForm.applicantPhone || ''}
+                          onChange={(e) => setEditForm({...editForm, applicantPhone: e.target.value})}
+                          placeholder="05xxxxxxxx"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest mr-1">رقم العميل</label>
+                        <input 
+                          type="text"
+                          value={editForm.clientNumber || ''}
+                          onChange={(e) => setEditForm({...editForm, clientNumber: e.target.value})}
+                          placeholder="رقم العميل..."
+                          className="w-full bg-amber-50/50 border border-amber-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-amber-500 outline-none transition-all font-bold text-amber-950 font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mr-1">اسم المندوب</label>
+                        <input 
+                          type="text"
+                          value={editForm.representativeName || ''}
+                          onChange={(e) => setEditForm({...editForm, representativeName: e.target.value})}
+                          placeholder="اسم المندوب المسؤول..."
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mr-1">رقم جوال المندوب</label>
+                        <input 
+                          type="tel"
+                          value={editForm.representativePhone || ''}
+                          onChange={(e) => setEditForm({...editForm, representativePhone: e.target.value})}
+                          placeholder="05xxxxxxxx"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 font-mono text-sm"
+                        />
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="pt-6 flex gap-4">
+                  {/* Section 3: Financial Overview */}
+                  <div className="space-y-4 bg-slate-50/60 p-6 rounded-3xl border border-slate-100">
+                    <div className="flex items-center gap-2 text-indigo-600 border-b border-slate-200/60 pb-3">
+                      <CreditCard size={18} />
+                      <h4 className="text-sm font-black">3. المبالغ والوضع المالي</h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">مبلغ المطالبة</label>
+                        <input 
+                          required
+                          type="number"
+                          value={editForm.claimAmount ?? ''}
+                          onChange={(e) => setEditForm({...editForm, claimAmount: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-black text-slate-900 font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-green-600 uppercase tracking-widest mr-1">المبلغ المستلم / المحصل</label>
+                        <input 
+                          required
+                          type="number"
+                          value={editForm.receivedAmount ?? ''}
+                          onChange={(e) => setEditForm({...editForm, receivedAmount: e.target.value})}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-black text-green-600 font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-red-500 uppercase tracking-widest mr-1">المبلغ المتبقي (محسوب تلقائياً)</label>
+                        <div className="w-full bg-red-50/50 border border-red-100 rounded-xl px-4 py-3 font-black text-red-600 font-mono text-sm">
+                          {((Number(editForm.claimAmount) || 0) - (Number(editForm.receivedAmount) || 0)).toLocaleString()} ر.س
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 4: Execution Progress & Notes */}
+                  <div className="space-y-4 bg-slate-50/60 p-6 rounded-3xl border border-slate-100">
+                    <div className="flex items-center gap-2 text-indigo-600 border-b border-slate-200/60 pb-3">
+                      <TrendingUp size={18} />
+                      <h4 className="text-sm font-black">4. سير الإجراء التنفيذي والتحديثات</h4>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">تحديث السحب الأخير / ملخص الإجراء</label>
+                        <input 
+                          type="text"
+                          value={editForm.lastWithdrawalUpdate || ''}
+                          onChange={(e) => setEditForm({...editForm, lastWithdrawalUpdate: e.target.value})}
+                          placeholder="مثال: تم إقرار سحب بقيمة..."
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-bold text-slate-800 text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">تفاصيل سير الإجراء التنفيذي</label>
+                        <textarea 
+                          value={editForm.executionProgress || ''}
+                          onChange={(e) => setEditForm({...editForm, executionProgress: e.target.value})}
+                          placeholder="أدخل كافة ملاحظات وتفاصيل سير القضية بالتفصيل..."
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-medium text-slate-800 text-sm h-28 leading-relaxed"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Submit Buttons */}
+                  <div className="pt-2 flex gap-4 sticky bottom-0 bg-white py-4 border-t border-slate-100">
                     <button 
                       type="submit"
                       disabled={editSubmitting}
-                      className="flex-[2] py-5 bg-indigo-600 text-white rounded-3xl font-black hover:bg-indigo-700 transition-all shadow-2xl shadow-indigo-100 flex items-center justify-center gap-3 active:scale-95"
+                      className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 flex items-center justify-center gap-2 active:scale-95 text-base cursor-pointer"
                     >
-                      {editSubmitting ? <Loader2 className="w-6 h-6 animate-spin" /> : <Save size={20} />}
-                      حفظ كافة التعديلات
+                      {editSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save size={20} />}
+                      حفظ كافة البيانات والتعديلات
                     </button>
                     <button 
                       type="button"
                       onClick={() => setIsEditModalOpen(false)}
                       disabled={editSubmitting}
-                      className="flex-1 py-5 bg-slate-50 text-slate-400 rounded-3xl font-bold hover:bg-slate-100 transition-all flex items-center justify-center gap-2"
+                      className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-slate-200 transition-all flex items-center justify-center gap-2 text-base cursor-pointer"
                     >
                       إلغاء
                     </button>

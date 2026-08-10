@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../../firebase/config';
-import { Loader2, Plus, Trash2, Save, Upload, RefreshCw } from 'lucide-react';
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { db, auth } from '../../firebase/config';
+import { Loader2, Plus, Trash2, Save, Upload, Download, Database, ShieldAlert, CheckCircle } from 'lucide-react';
 
 export default function GeneralExecutionSettings() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [exportingDb, setExportingDb] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
   const [settings, setSettings] = useState({
     transactionTypes: [] as string[],
     idTypes: [] as string[]
@@ -14,6 +16,42 @@ export default function GeneralExecutionSettings() {
   const [newTransactionType, setNewTransactionType] = useState('');
   const [newIdType, setNewIdType] = useState('');
   const [logoBase64, setLogoBase64] = useState<string>('');
+  const [resettingDb, setResettingDb] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
+  const [confirmText, setResetConfirmText] = useState('');
+  const [showResetModal, setShowResetModal] = useState(false);
+
+  const handleResetTransactionalData = async () => {
+    if (confirmText.trim() !== 'مسح البيانات') {
+      alert('يرجى كتابة كلمة "مسح البيانات" للتأكيد');
+      return;
+    }
+
+    setResettingDb(true);
+    try {
+      const token = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+      const res = await fetch('/api/reset-transactional-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setResetSuccess(true);
+        setShowResetModal(false);
+        setResetConfirmText('');
+        alert(`تم تفريغ النظام بنجاح! إجمالي السجلات الممسوحة: ${data.totalDeleted}`);
+      } else {
+        alert(`فشلت العملية: ${data.error || 'خطأ غير معروف'}`);
+      }
+    } catch (err: any) {
+      alert(`خطأ في خادم النظام: ${err.message}`);
+    }
+    setResettingDb(false);
+  };
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -117,6 +155,65 @@ export default function GeneralExecutionSettings() {
     setLogoBase64('');
   };
 
+  const handleExportDatabase = async () => {
+    setExportingDb(true);
+    setExportSuccess(false);
+    try {
+      const collectionsToExport = [
+        'cases',
+        'requests',
+        'payment_plans',
+        'case_sessions',
+        'appEvents',
+        'users',
+        'roles_permissions',
+        'notificationRules',
+        'notificationLogs',
+        'settings'
+      ];
+
+      const exportedData: Record<string, any[]> = {};
+      let totalRecords = 0;
+
+      for (const colName of collectionsToExport) {
+        try {
+          const snapshot = await getDocs(collection(db, colName));
+          const docsData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          exportedData[colName] = docsData;
+          totalRecords += docsData.length;
+        } catch (e) {
+          console.warn(`Could not export collection ${colName}:`, e);
+          exportedData[colName] = [];
+        }
+      }
+
+      const backupData = {
+        exportTimestamp: new Date().toISOString(),
+        system: "JPF Legal & Execution System",
+        totalCollections: Object.keys(exportedData).length,
+        totalRecords,
+        collections: exportedData
+      };
+
+      const jsonStr = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `jpf_database_backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 5000);
+    } catch (err: any) {
+      alert(`خطأ أثناء تصدير نسخة قاعدة البيانات: ${err.message}`);
+    }
+    setExportingDb(false);
+  };
+
   const saveSettings = async () => {
     setSubmitting(true);
     try {
@@ -153,6 +250,147 @@ export default function GeneralExecutionSettings() {
 
   return (
     <div className="space-y-12 animate-in fade-in duration-500" dir="rtl">
+      {/* قسم النسخ الاحتياطي وتصدير قاعدة البيانات */}
+      <section className="space-y-6 bg-gradient-to-br from-indigo-900 to-slate-900 text-white p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400"></div>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+          <div className="space-y-2 max-w-xl">
+            <div className="flex items-center gap-2 text-indigo-300 font-bold text-xs uppercase tracking-widest">
+              <Database size={16} />
+              <span>إدارة النسخ الاحتياطي لقاعدة البيانات</span>
+            </div>
+            <h2 className="text-2xl font-black text-white">تصدير كافة بيانات النظام (JSON)</h2>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              احصل فوراً على نسخة احتياطية شاملة بصيغة JSON تحتوي على جميع مجموعات البيانات: الطلبات، القضايا، الجلسات، خطط الدفع، المستخدمين، الصلاحيات، وإعدادات النظام.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={handleExportDatabase}
+              disabled={exportingDb}
+              className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-3 active:scale-95 text-base cursor-pointer disabled:opacity-50"
+            >
+              {exportingDb ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download size={20} />}
+              <span>تنزيل النسخة الاحتياطية الان</span>
+            </button>
+            {exportSuccess && (
+              <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold justify-center bg-emerald-950/50 py-2 px-4 rounded-xl border border-emerald-500/30">
+                <CheckCircle size={14} />
+                <span>تم تجهيز وتنزيل الملف بنجاح!</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 pt-6 border-t border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-medium text-slate-400">
+          <div className="flex items-center gap-2 bg-slate-800/50 p-3 rounded-xl">
+            <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+            <span>القضايا (cases)</span>
+          </div>
+          <div className="flex items-center gap-2 bg-slate-800/50 p-3 rounded-xl">
+            <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+            <span>الطلبات (requests)</span>
+          </div>
+          <div className="flex items-center gap-2 bg-slate-800/50 p-3 rounded-xl">
+            <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+            <span>الجلسات والدفعات</span>
+          </div>
+          <div className="flex items-center gap-2 bg-slate-800/50 p-3 rounded-xl">
+            <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+            <span>المستخدمين والإعدادات</span>
+          </div>
+        </div>
+      </section>
+
+      {/* قسم منطقة الخطر - مسح البيانات التجريبية والبدء الفعلي */}
+      <section className="space-y-6 bg-red-50/70 border border-red-200/80 p-8 rounded-[2.5rem] shadow-sm relative overflow-hidden">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+          <div className="space-y-2 max-w-xl">
+            <div className="flex items-center gap-2 text-red-600 font-bold text-xs uppercase tracking-widest">
+              <ShieldAlert size={18} />
+              <span>منطقة الخطر - تصفير بيئة العمل</span>
+            </div>
+            <h2 className="text-2xl font-black text-red-950">مسح البيانات التجريبية والبدء الفعلي</h2>
+            <p className="text-sm text-red-800 leading-relaxed">
+              سيتم تفريغ كافة الطلبات والقضايا والجلسات والدفعات والسجلات التجريبية، مع <strong className="font-black text-red-950">الحفاظ الكامل على حسابات المستخدمين وصلاحياتهم وإعدادات النظام وشعاره</strong>.
+            </p>
+          </div>
+
+          <div className="shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowResetModal(true)}
+              className="px-8 py-4 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-3 active:scale-95 text-base cursor-pointer"
+            >
+              <Trash2 size={20} />
+              <span>مسح البيانات التجريبية الآن</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-bold pt-4 border-t border-red-200/60">
+          <div className="bg-white/80 p-3.5 rounded-xl border border-red-100 text-red-900">
+            <span className="block text-[11px] font-black text-red-500 mb-1">❌ ما سيتم مسحه:</span>
+            سجلات الطلبات (16) • الملفات والقضايا (28) • الجلسات والدفعات • الأرشيف والأحداث.
+          </div>
+          <div className="bg-white/80 p-3.5 rounded-xl border border-emerald-100 text-emerald-900">
+            <span className="block text-[11px] font-black text-emerald-600 mb-1">✅ ما سيتم الحفاظ عليه:</span>
+            حسابات المستخدمين والموظفين • الأدوار والصلاحيات • قواعد ربط التلجرام • الشعار والقوالب.
+          </div>
+        </div>
+      </section>
+
+      {/* Modal التأكيد لمسح البيانات */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-[2rem] max-w-md w-full p-8 space-y-6 shadow-2xl border border-slate-100">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="p-3 bg-red-100 rounded-2xl">
+                <ShieldAlert size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900">تأكيد مسح البيانات</h3>
+                <p className="text-xs text-slate-400 font-medium">إجراء حساس لا يمكن التراجع عنه</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 leading-relaxed font-medium">
+              تأكد من تنزيل النسخة الاحتياطية أولاً. لمتابعة العملية ومسح جميع القضايا والطلبات التجريبية، يرجى كتابة عبارة <strong className="text-red-600 font-black">"مسح البيانات"</strong> في الحقل أدناه:
+            </p>
+
+            <input
+              type="text"
+              value={confirmText}
+              onChange={(e) => setResetConfirmText(e.target.value)}
+              placeholder="اكتب: مسح البيانات"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-center font-black text-slate-800 outline-none focus:ring-2 focus:ring-red-500"
+            />
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleResetTransactionalData}
+                disabled={resettingDb || confirmText.trim() !== 'مسح البيانات'}
+                className="flex-[2] py-3.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white rounded-xl font-black transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {resettingDb ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 size={18} />}
+                <span>تأكيد المسح الآن</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowResetModal(false); setResetConfirmText(''); }}
+                disabled={resettingDb}
+                className="flex-1 py-3.5 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-xl font-bold transition-all cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* قسم تعديل وتحميل شعار الموقع وهوية الشؤون القانونية */}
       <section className="space-y-6 bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
         <div className="space-y-1">
