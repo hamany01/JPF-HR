@@ -21,6 +21,49 @@ const SYSTEM_PROMPT = `أنت وكيل ذكاء اصطناعي يعمل داخل
 
 قواعد: تحدث بالعربية، كن موجزاً، نفذ الطلبات مباشرة، لا تقل إنك لا تملك صلاحيات.`;
 
+// Fetch basic system stats from Firestore to prevent hallucination
+async function getSystemStats(token: string, uid: string): Promise<string> {
+  const collections = ['cases', 'requests', 'payment_plans', 'users'];
+  const stats: Record<string, number> = {};
+  
+  for (const col of collections) {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DB_ID}/documents/${col}?pageSize=1`;
+    try {
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (resp.ok) {
+        const json = await resp.json();
+        // If there are documents, we need to count them
+        // pageSize=1 returns at most 1 doc, but we can check if collection is empty
+        const docs = json.documents || [];
+        if (docs.length === 0 && !json.nextPageToken) {
+          stats[col] = 0;
+        } else {
+          // Need to fetch count - use aggregation or just fetch all with larger pageSize
+          const countUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DB_ID}/documents/${col}?pageSize=300`;
+          const countResp = await fetch(countUrl, { headers: { Authorization: `Bearer ${token}` } });
+          if (countResp.ok) {
+            const countJson = await countResp.json();
+            stats[col] = (countJson.documents || []).length;
+          } else {
+            stats[col] = 0;
+          }
+        }
+      } else {
+        stats[col] = 0;
+      }
+    } catch {
+      stats[col] = 0;
+    }
+  }
+  
+  return `\n\nإحصائيات حقيقية من قاعدة البيانات (استخدم هذه الأرقام فقط، لا تخترع أرقاماً):
+- عدد القضايا: ${stats.cases || 0}
+- عدد الطلبات: ${stats.requests || 0}
+- عدد خطط الدفع: ${stats.payment_plans || 0}
+- عدد المستخدمين: ${stats.users || 0}
+- إذا كان العدد 0، فهذا يعني أن النظام جديد ولا توجد بيانات بعد.`;
+}
+
 // Decode Firebase JWT to extract UID (no verification — Firestore will verify)
 function decodeFirebaseToken(token: string): string | null {
   try {
@@ -111,9 +154,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ success: false, message: 'الرسالة طويلة جداً (الحد الأقصى 2000 حرف)' });
     }
 
-    // Build system prompt with user context
+    // Build system prompt with user context + REAL system stats
     let fullPrompt = SYSTEM_PROMPT;
     fullPrompt += `\n\nمعلومات المستخدم:\n- الاسم: ${userData.fullName || userData.name || 'مستخدم'}\n- الدور: ${role}`;
+    
+    // Fetch REAL system stats to prevent hallucination
+    const systemStats = await getSystemStats(token, uid);
+    fullPrompt += systemStats;
 
     // Call Ollama
     const ollamaResp = await fetch(`${OLLAMA_URL}/api/chat`, {
