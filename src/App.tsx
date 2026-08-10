@@ -20,6 +20,7 @@ import RequestsListPage from './pages/RequestsListPage';
 import AboutPage from './pages/AboutPage';
 import NotAuthorizedPage from './pages/NotAuthorizedPage';
 import RecycleBinPage from './pages/RecycleBinPage';
+import AIAssistant from './components/AIAssistant';
 
 export default function App() {
   return (
@@ -84,6 +85,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <AIAssistant />
         </ThemeProvider>
       </AuthProvider>
     </Router>

@@ -1665,6 +1665,170 @@ app.delete('/api/payment-plans/:id/hard-delete', async (req, res) => {
 });
 
 
+// ============================================================
+// AI AGENT ENDPOINTS — وكيل الذكاء الاصطناعي
+// ============================================================
+
+// POST /api/ai/chat — محادثة مع الوكيل
+app.post('/api/ai/chat', rateLimit(RATE_LIMIT_MAX_API), async (req, res) => {
+  try {
+    const { uid, role, userData } = await checkAuthAndGetRole(req);
+    const { message } = req.body || {};
+
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      return res.status(400).json({ success: false, message: 'الرسالة فارغة' });
+    }
+
+    if (message.length > 2000) {
+      return res.status(400).json({ success: false, message: 'الرسالة طويلة جداً (الحد الأقصى 2000 حرف)' });
+    }
+
+    // Only managers and admins can use the AI agent
+    if (role !== 'admin' && role !== 'company_manager' && role !== 'assistant_manager' && role !== 'law_firm_manager') {
+      return res.status(403).json({ success: false, message: 'الوكيل متاح للمدراء فقط' });
+    }
+
+    // Import AI service dynamically
+    const { chatWithAgent } = await import('./src/services/aiAgent');
+
+    const response = await chatWithAgent(message, {
+      userRole: role,
+      userName: userData.fullName || userData.name || 'مستخدم',
+    });
+
+    // Log the conversation
+    const { db, admin } = await getFirebaseAdmin();
+    await db.collection('ai_conversations').add({
+      userId: uid,
+      userName: userData.fullName || userData.name || '',
+      role: role,
+      message: message,
+      response: response,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return res.json({ success: true, response });
+  } catch (error: any) {
+    console.error('[AI Agent] Chat endpoint error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || 'خطأ في معالجة الطلب' 
+    });
+  }
+});
+
+// GET /api/ai/analyze — تحليل شامل للنظام
+app.get('/api/ai/analyze', rateLimit(RATE_LIMIT_MAX_API), async (req, res) => {
+  try {
+    const { uid, role } = await checkAuthAndGetRole(req);
+
+    // Only admins can run full analysis
+    if (role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'التحليل متاح للمشرفين فقط' });
+    }
+
+    const { db } = await getFirebaseAdmin();
+    const { performFullAnalysis } = await import('./src/services/aiAgent');
+
+    const analysis = await performFullAnalysis(db);
+
+    return res.json({ success: true, data: analysis });
+  } catch (error: any) {
+    console.error('[AI Agent] Analyze endpoint error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || 'فشل في تحليل النظام' 
+    });
+  }
+});
+
+// GET /api/ai/insights — جلب أحدث التنبيهات والتوصيات
+app.get('/api/ai/insights', rateLimit(RATE_LIMIT_MAX_API), async (req, res) => {
+  try {
+    const { uid, role } = await checkAuthAndGetRole(req);
+
+    if (role !== 'admin' && role !== 'company_manager' && role !== 'assistant_manager') {
+      return res.status(403).json({ success: false, message: 'غير مصرح' });
+    }
+
+    const { db } = await getFirebaseAdmin();
+    
+    // Get recent AI insights from Firestore
+    const insightsSnap = await db.collection('ai_insights')
+      .orderBy('createdAt', 'desc')
+      .limit(20)
+      .get();
+
+    const insights = insightsSnap.docs.map((doc: any) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    return res.json({ success: true, data: insights });
+  } catch (error: any) {
+    console.error('[AI Agent] Insights endpoint error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || 'فشل في جلب التنبيهات' 
+    });
+  }
+});
+
+// POST /api/ai/telegram-report — إرسال تقرير عبر تيليجرام
+app.post('/api/ai/telegram-report', rateLimit(RATE_LIMIT_MAX_API), async (req, res) => {
+  try {
+    const { uid, role } = await checkAuthAndGetRole(req);
+
+    if (role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'متاح للمشرفين فقط' });
+    }
+
+    const { db } = await getFirebaseAdmin();
+    const { performFullAnalysis, generateTelegramReport } = await import('./src/services/aiAgent');
+
+    const analysis = await performFullAnalysis(db);
+    const report = await generateTelegramReport(analysis);
+
+    // Get Telegram settings
+    const settingsSnap = await db.collection('notificationSettings').doc('global').get();
+    if (!settingsSnap.exists) {
+      return res.status(400).json({ success: false, message: 'إعدادات تيليجرام غير مهيأة' });
+    }
+
+    const settings = settingsSnap.data();
+    const botToken = settings.telegram?.botToken || process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = settings.telegram?.defaultChatId || process.env.TELEGRAM_CHAT_ID;
+
+    if (!botToken || !chatId) {
+      return res.status(400).json({ success: false, message: 'Bot Token أو Chat ID غير موجود' });
+    }
+
+    // Send via Telegram API
+    const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: report,
+        parse_mode: 'HTML',
+      }),
+    });
+
+    if (!telegramResponse.ok) {
+      const errText = await telegramResponse.text();
+      return res.status(500).json({ success: false, message: `فشل إرسال التقرير: ${errText}` });
+    }
+
+    return res.json({ success: true, message: 'تم إرسال التقرير إلى تيليجرام بنجاح' });
+  } catch (error: any) {
+    console.error('[AI Agent] Telegram report error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || 'فشل في إرسال التقرير' 
+    });
+  }
+});
+
 // Vite middleware flow
 async function startServer() {
   console.log('🔄 Starting full-stack server setup...');
