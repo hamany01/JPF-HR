@@ -1,5 +1,7 @@
 {
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/api/ai/chat", "destination": "/api/ai/chat" },
+    { "source": "/api/ai/analyze", "destination": "/api/ai/analyze" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
